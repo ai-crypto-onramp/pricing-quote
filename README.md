@@ -1,5 +1,6 @@
 # Pricing / Quote
 ![CI](https://github.com/ai-crypto-onramp/pricing-quote/actions/workflows/ci.yml/badge.svg)
+[![codecov](https://codecov.io/gh/ai-crypto-onramp/pricing-quote/branch/main/graph/badge.svg)](https://codecov.io/gh/ai-crypto-onramp/pricing-quote)
 
 Real-time crypto on-ramp rate quotes with a ~30-second rate-lock window; sources spot rates, applies spreads, and marks up fees.
 
