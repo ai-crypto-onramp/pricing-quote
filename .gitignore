@@ -3,4 +3,5 @@ bin/
 vendor/
 .env
 *.log
-*.testcoverage.out
+*.test
+coverage.out
