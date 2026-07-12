@@ -1,0 +1,506 @@
+package main
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Config holds runtime knobs (env-overridable, but defaults are hardcoded).
+type Config struct {
+	RateLockTTL          time.Duration
+	MaxStaleAge          time.Duration
+	DefaultSpreadBPS     int
+	SlippageToleranceBPS int
+	BulkQuoteMaxItems    int
+}
+
+// DefaultConfig returns the documented default configuration.
+func DefaultConfig() Config {
+	return Config{
+		RateLockTTL:          30 * time.Second,
+		MaxStaleAge:           5000 * time.Millisecond,
+		DefaultSpreadBPS:      50,
+		SlippageToleranceBPS: 100,
+		BulkQuoteMaxItems:     10,
+	}
+}
+
+// Server wires the store, spot, pricer, claim, audit, and HTTP handlers.
+type Server struct {
+	cfg    Config
+	store  *Store
+	locks  *LockStore
+	spot   *SpotService
+	pricer *Pricer
+	claim  *ClaimService
+	audit  *AuditLog
+}
+
+// NewServer builds a Server with in-memory backing stores and seeded data.
+func NewServer(cfg Config) *Server {
+	store := NewStore()
+	locks := NewLockStore()
+	spot := NewSpotService(cfg.MaxStaleAge)
+	pricer := NewPricer(store, spot, cfg.DefaultSpreadBPS)
+	audit := NewAuditLog()
+	claim := NewClaimService(store, locks, spot, audit, cfg.SlippageToleranceBPS)
+	seedFeeSchedules(store)
+	s := &Server{
+		cfg:    cfg,
+		store:  store,
+		locks:  locks,
+		spot:   spot,
+		pricer: pricer,
+		claim:  claim,
+		audit:  audit,
+	}
+	return s
+}
+
+func seedFeeSchedules(store *Store) {
+	now := time.Now().UTC()
+	fs := []FeeSchedule{
+		{ID: 1, UserTier: "tier_1", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 1000, Side: "buy", SpreadBPS: 80, FeeType: "bps", FeeBPS: 50, Enabled: true, UpdatedAt: now},
+		{ID: 2, UserTier: "tier_1", Asset: "BTC", SizeBandMin: 1000, SizeBandMax: 10000, Side: "buy", SpreadBPS: 60, FeeType: "bps", FeeBPS: 30, Enabled: true, UpdatedAt: now},
+		{ID: 3, UserTier: "tier_1", Asset: "ETH", SizeBandMin: 0, SizeBandMax: 100, Side: "buy", SpreadBPS: 90, FeeType: "bps", FeeBPS: 50, Enabled: true, UpdatedAt: now},
+		{ID: 4, UserTier: "tier_2", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 1000, Side: "buy", SpreadBPS: 70, FeeType: "bps", FeeBPS: 40, Enabled: true, UpdatedAt: now},
+		{ID: 5, UserTier: "tier_2", Asset: "ETH", SizeBandMin: 0, SizeBandMax: 100, Side: "buy", SpreadBPS: 75, FeeType: "bps", FeeBPS: 40, Enabled: true, UpdatedAt: now},
+		{ID: 6, UserTier: "tier_2", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 1000, Side: "sell", SpreadBPS: 70, FeeType: "bps", FeeBPS: 40, Enabled: true, UpdatedAt: now},
+		{ID: 7, UserTier: "tier_1", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 1000, Side: "sell", SpreadBPS: 80, FeeType: "bps", FeeBPS: 50, Enabled: true, UpdatedAt: now},
+	}
+	store.SetFeeSchedules(fs)
+}
+
+// newMux builds the HTTP routing mux for the service.
+func newMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	srv := NewServer(DefaultConfig())
+	srv.register(mux)
+	return mux
+}
+
+// register attaches all service routes to the mux.
+func (s *Server) register(mux *http.ServeMux) {
+	mux.HandleFunc("/healthz", healthz)
+	mux.HandleFunc("/readyz", s.readyz)
+	mux.HandleFunc("/v1/quotes", s.quotesHandler)
+	mux.HandleFunc("/v1/quotes/", s.quoteByIDHandler)
+	mux.HandleFunc("/internal/v1/quotes/", s.internalQuoteHandler)
+	mux.HandleFunc("/internal/v1/fee-schedules/reload", s.feeSchedulesReload)
+	mux.HandleFunc("/v1/audit-events", s.auditEventsHandler)
+}
+
+// run starts the HTTP server on addr and blocks until the server exits.
+func run(addr string) error {
+	return http.ListenAndServe(addr, requestIDMiddleware(newMux()))
+}
+
+func healthz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
+	if !s.spot.IsReady() {
+		writeError(w, r, http.StatusServiceUnavailable, "not_ready", "spot cache cold")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
+}
+
+// requestIDMiddleware injects X-Request-ID into request context (header).
+func requestIDMiddleware(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rid := r.Header.Get("X-Request-ID")
+		if rid == "" {
+			rid = newRequestID()
+		}
+		w.Header().Set("X-Request-ID", rid)
+		r.Header.Set("X-Request-ID", rid)
+		h.ServeHTTP(w, r)
+	})
+}
+
+func newRequestID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+// writeError writes a structured error envelope.
+func writeError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]string{
+			"code":       code,
+			"message":    message,
+			"request_id": requestIDFromContext(r),
+		},
+	})
+}
+
+func writeErrorApp(w http.ResponseWriter, r *http.Request, e *AppError) {
+	writeError(w, r, e.Status, e.Code, e.Message)
+}
+
+// quotesHandler dispatches POST /v1/quotes (single + bulk).
+func (s *Server) quotesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
+	body, err := readBody(r)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "bad_request", "could not read body")
+		return
+	}
+	// Detect bulk vs single by presence of "items" array.
+	var probe struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(body, &probe); err == nil && probe.Items != nil {
+		s.bulkQuotes(w, r, body)
+		return
+	}
+	s.singleQuote(w, r, body)
+}
+
+func (s *Server) singleQuote(w http.ResponseWriter, r *http.Request, body []byte) {
+	var req quoteRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, r, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+	if err := validateRequest(req); err != nil {
+		writeErrorApp(w, r, err.(*AppError))
+		return
+	}
+	q, appErr := s.createQuote(req)
+	if appErr != nil {
+		writeErrorApp(w, r, appErr)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(q.toResponse())
+}
+
+func (s *Server) bulkQuotes(w http.ResponseWriter, r *http.Request, body []byte) {
+	var req bulkRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, r, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+	if len(req.Items) > s.cfg.BulkQuoteMaxItems {
+		writeError(w, r, http.StatusBadRequest, "too_many_items", "bulk quote exceeds max items")
+		return
+	}
+	type itemResp struct {
+		Ok     bool        `json:"ok"`
+		Quote  *Quote      `json:"quote,omitempty"`
+		Error  string      `json:"error,omitempty"`
+	}
+	resps := make([]itemResp, 0, len(req.Items))
+	for _, it := range req.Items {
+		if err := validateRequest(it); err != nil {
+			resps = append(resps, itemResp{Ok: false, Error: err.(*AppError).Code})
+			continue
+		}
+		q, appErr := s.createQuote(it)
+		if appErr != nil {
+			resps = append(resps, itemResp{Ok: false, Error: appErr.Code})
+			continue
+		}
+		resps = append(resps, itemResp{Ok: true, Quote: q})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]any{"items": resps})
+}
+
+func (s *Server) createQuote(req quoteRequest) (*Quote, *AppError) {
+	amount, _ := parseAmount(req.Amount)
+	res, err := s.pricer.Compute(req.From, req.To, amount, req.UserTier, req.Side)
+	if err != nil {
+		return nil, errSpotUnavailable
+	}
+	id := newQuoteID()
+	now := time.Now().UTC()
+	exp := now.Add(s.cfg.RateLockTTL)
+	q := &Quote{
+		QuoteID:      id,
+		From:         req.From,
+		To:           req.To,
+		Amount:       req.Amount,
+		Rate:         strconv.FormatFloat(res.Rate, 'f', 8, 64),
+		SpreadBPS:    res.SpreadBPS,
+		Fee:          strconv.FormatFloat(res.Fee, 'f', 8, 64),
+		FeeCurrency:  req.From,
+		Total:        strconv.FormatFloat(res.Total, 'f', 8, 64),
+		CryptoAmount: strconv.FormatFloat(res.CryptoAmount, 'f', 8, 64),
+		UserTier:     req.UserTier,
+		Side:         req.Side,
+		Status:       StatusOpen,
+		SourceVenue:  res.SourceVenue,
+		CreatedAt:    now,
+		ExpiresAt:    exp,
+		LockedRate:    res.Rate,
+		SpotPrice:     res.Spot,
+	}
+	s.store.SaveQuote(q)
+	lockPayload, _ := json.Marshal(map[string]any{
+		"rate":       res.Rate,
+		"from":       req.From,
+		"to":         req.To,
+		"amount":     req.Amount,
+		"expires_at": exp.Format(time.RFC3339Nano),
+		"source_venue": res.SourceVenue,
+	})
+	s.locks.SetNX(lockKey(id), string(lockPayload), s.cfg.RateLockTTL)
+	s.audit.Append(AuditEvent{Type: "quote.issued", QuoteID: id, UserTier: req.UserTier, SourceVenue: res.SourceVenue})
+	return q, nil
+}
+
+// quoteByIDHandler dispatches GET and POST /v1/quotes/{id}[/refresh].
+func (s *Server) quoteByIDHandler(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/v1/quotes/")
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		writeError(w, r, http.StatusNotFound, "not_found", "quote id required")
+		return
+	}
+	id := parts[0]
+	if len(parts) == 2 && parts[1] == "refresh" {
+		if r.Method != http.MethodPost {
+			writeError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+			return
+		}
+		s.refreshQuote(w, r, id)
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
+	s.getQuote(w, r, id)
+}
+
+func (s *Server) getQuote(w http.ResponseWriter, r *http.Request, id string) {
+	q := s.store.GetQuote(id)
+	if q == nil {
+		writeErrorApp(w, r, errNotFound)
+		return
+	}
+	if q.Status == StatusExpired || (q.Status == StatusOpen && time.Now().UTC().After(q.ExpiresAt)) {
+		s.store.UpdateQuote(id, func(row *Quote) { row.Status = StatusExpired })
+		q.Status = StatusExpired
+		writeErrorApp(w, r, errExpired)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(q.toResponse())
+}
+
+func (s *Server) refreshQuote(w http.ResponseWriter, r *http.Request, id string) {
+	old := s.store.GetQuote(id)
+	if old == nil {
+		writeErrorApp(w, r, errNotFound)
+		return
+	}
+	s.store.UpdateQuote(id, func(row *Quote) { row.Status = StatusCanceled })
+	s.locks.Del(lockKey(id))
+	s.audit.Append(AuditEvent{Type: "quote.refreshed", QuoteID: id, UserTier: old.UserTier, SourceVenue: old.SourceVenue})
+	amount, _ := parseAmount(old.Amount)
+	res, err := s.pricer.Compute(old.From, old.To, amount, old.UserTier, old.Side)
+	if err != nil {
+		writeErrorApp(w, r, errSpotUnavailable)
+		return
+	}
+	newID := newQuoteID()
+	now := time.Now().UTC()
+	exp := now.Add(s.cfg.RateLockTTL)
+	nq := &Quote{
+		QuoteID:      newID,
+		From:         old.From,
+		To:           old.To,
+		Amount:       old.Amount,
+		Rate:         strconv.FormatFloat(res.Rate, 'f', 8, 64),
+		SpreadBPS:    res.SpreadBPS,
+		Fee:          strconv.FormatFloat(res.Fee, 'f', 8, 64),
+		FeeCurrency:  old.From,
+		Total:        strconv.FormatFloat(res.Total, 'f', 8, 64),
+		CryptoAmount: strconv.FormatFloat(res.CryptoAmount, 'f', 8, 64),
+		UserTier:     old.UserTier,
+		Side:         old.Side,
+		Status:       StatusOpen,
+		SourceVenue:  res.SourceVenue,
+		CreatedAt:    now,
+		ExpiresAt:    exp,
+		LockedRate:   res.Rate,
+		SpotPrice:    res.Spot,
+	}
+	s.store.SaveQuote(nq)
+	lockPayload, _ := json.Marshal(map[string]any{
+		"rate":         res.Rate,
+		"from":         old.From,
+		"to":           old.To,
+		"amount":       old.Amount,
+		"expires_at":   exp.Format(time.RFC3339Nano),
+		"source_venue": res.SourceVenue,
+	})
+	s.locks.SetNX(lockKey(newID), string(lockPayload), s.cfg.RateLockTTL)
+	s.audit.Append(AuditEvent{Type: "quote.issued", QuoteID: newID, UserTier: old.UserTier, SourceVenue: res.SourceVenue})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(nq.toResponse())
+}
+
+// internalQuoteHandler dispatches POST /internal/v1/quotes/{id}/claim.
+func (s *Server) internalQuoteHandler(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/internal/v1/quotes/")
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		writeError(w, r, http.StatusNotFound, "not_found", "quote id required")
+		return
+	}
+	id := parts[0]
+	if len(parts) != 2 || parts[1] != "claim" {
+		writeError(w, r, http.StatusNotFound, "not_found", "unknown route")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
+	var req ClaimRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, r, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(req.ClaimedBy) == "" {
+		writeError(w, r, http.StatusBadRequest, "bad_request", "claimed_by required")
+		return
+	}
+	res := s.claim.Claim(id, req.ClaimedBy)
+	if res.Reason != "" {
+		status := http.StatusConflict
+		switch res.Reason {
+		case "missing":
+			writeError(w, r, http.StatusNotFound, "not_found", "quote not found")
+			return
+		case "expired":
+			writeError(w, r, http.StatusGone, "expired", "quote expired")
+			return
+		default:
+			writeError(w, r, status, res.Reason, "claim rejected: "+res.Reason)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res.Quote.toResponse())
+}
+
+// feeSchedulesReload handles POST /internal/v1/fee-schedules/reload.
+func (s *Server) feeSchedulesReload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
+	seedFeeSchedules(s.store)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"status": "reloaded"})
+}
+
+// auditEventsHandler handles GET /v1/audit-events.
+func (s *Server) auditEventsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"events": s.audit.Events()})
+}
+
+// toResponse renders the quote for the API surface.
+func (q *Quote) toResponse() map[string]any {
+	resp := map[string]any{
+		"quote_id":      q.QuoteID,
+		"from":          q.From,
+		"to":            q.To,
+		"amount":        q.Amount,
+		"rate":          q.Rate,
+		"spread_bps":    q.SpreadBPS,
+		"fee":           q.Fee,
+		"fee_currency":  q.FeeCurrency,
+		"total":         q.Total,
+		"crypto_amount": q.CryptoAmount,
+		"user_tier":     q.UserTier,
+		"side":          q.Side,
+		"status":        string(q.Status),
+		"source_venue":  q.SourceVenue,
+		"created_at":    q.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"expires_at":    q.ExpiresAt.UTC().Format(time.RFC3339Nano),
+	}
+	if q.ClaimedAt != nil {
+		resp["claimed_at"] = q.ClaimedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if q.ClaimedBy != "" {
+		resp["claimed_by"] = q.ClaimedBy
+	}
+	return resp
+}
+
+// StartSweeper launches a background goroutine that marks expired unclaimed
+// quotes as expired. Returns a stop function.
+func (s *Server) StartSweeper(interval time.Duration) func() {
+	stop := make(chan struct{})
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				s.sweepExpired()
+			}
+		}
+	}()
+	return func() { close(stop) }
+}
+
+func (s *Server) sweepExpired() {
+	now := time.Now().UTC()
+	for _, q := range s.store.ListQuotes() {
+		if q.Status == StatusOpen && now.After(q.ExpiresAt) {
+			s.store.UpdateQuote(q.QuoteID, func(row *Quote) { row.Status = StatusExpired })
+			s.audit.Append(AuditEvent{Type: "quote.expired", QuoteID: q.QuoteID, UserTier: q.UserTier, SourceVenue: q.SourceVenue})
+		}
+	}
+}
+
+func readBody(r *http.Request) ([]byte, error) {
+	defer r.Body.Close()
+	buf := make([]byte, 0, 4096)
+	tmp := make([]byte, 4096)
+	for {
+		n, err := r.Body.Read(tmp)
+		if n > 0 {
+			buf = append(buf, tmp[:n]...)
+		}
+		if err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			return nil, err
+		}
+	}
+	return buf, nil
+}
