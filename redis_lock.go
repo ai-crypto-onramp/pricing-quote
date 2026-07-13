@@ -66,8 +66,14 @@ func (r *redisLockBackend) Claim(key string) (string, bool) {
 	if res == nil {
 		return "", false
 	}
-	s, ok := res.(string)
-	return s, ok
+	switch v := res.(type) {
+	case string:
+		return v, true
+	case []byte:
+		return string(v), true
+	default:
+		return "", false
+	}
 }
 
 // Close releases the Redis connection.

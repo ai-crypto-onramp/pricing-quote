@@ -146,6 +146,7 @@ func runWithConfigCtx(ctx context.Context, cfg Config, log *logger) error {
 	locks := initLockBackend(cfg, log)
 	srv := NewServer(cfg)
 	srv.locks = locks
+	srv.claim = NewClaimService(srv.store, locks, srv.spot, srv.audit, cfg.SlippageToleranceBPS)
 	srv.log = log
 	mux := http.NewServeMux()
 	srv.register(mux)
