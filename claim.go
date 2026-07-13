@@ -19,15 +19,15 @@ type ClaimResult struct {
 
 // ClaimService implements the atomic claim flow with expiry and slippage guards.
 type ClaimService struct {
-	store              *Store
-	locks              *LockStore
-	spot               *SpotService
-	audit              *AuditLog
+	store                *Store
+	locks                LockBackend
+	spot                 *SpotService
+	audit                *AuditLog
 	slippageToleranceBPS int
 }
 
 // NewClaimService returns a ClaimService.
-func NewClaimService(store *Store, locks *LockStore, spot *SpotService, audit *AuditLog, slipBPS int) *ClaimService {
+func NewClaimService(store *Store, locks LockBackend, spot *SpotService, audit *AuditLog, slipBPS int) *ClaimService {
 	return &ClaimService{
 		store:                 store,
 		locks:                 locks,

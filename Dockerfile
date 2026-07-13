@@ -1,14 +1,14 @@
 FROM golang:1.22 AS builder
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /server .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /server .
 
-FROM alpine:3.20
-RUN apk add --no-cache wget
+FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /server /server
 EXPOSE 8080
+USER nonroot:nonroot
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget -qO- http://localhost:8080/healthz || exit 1
+  CMD ["/server", "-healthcheck"]
 ENTRYPOINT ["/server"]

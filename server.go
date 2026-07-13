@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -17,16 +18,37 @@ type Config struct {
 	DefaultSpreadBPS     int
 	SlippageToleranceBPS int
 	BulkQuoteMaxItems    int
+
+	Port                string
+	RedisURL            string
+	DatabaseURL         string
+	FeeScheduleURL      string
+	FXHedgingURL        string
+	ExchangeConnectorURL string
+	RateFeedTopic       string
+	OTLPEndpoint        string
+	LogLevel            string
+	L1CacheSize         int
+	L1CacheTTL          time.Duration
 }
 
 // DefaultConfig returns the documented default configuration.
 func DefaultConfig() Config {
 	return Config{
 		RateLockTTL:          30 * time.Second,
-		MaxStaleAge:           5000 * time.Millisecond,
-		DefaultSpreadBPS:      50,
-		SlippageToleranceBPS: 100,
-		BulkQuoteMaxItems:     10,
+		MaxStaleAge:           250 * time.Millisecond,
+		DefaultSpreadBPS:      100,
+		SlippageToleranceBPS: 150,
+		BulkQuoteMaxItems:     25,
+		Port:                 "8080",
+		RedisURL:             "redis://localhost:6379",
+		FeeScheduleURL:       "http://config-svc/v1/fee-schedules",
+		FXHedgingURL:         "http://fx-hedging:8080",
+		ExchangeConnectorURL: "http://exchange-connectors:8080",
+		RateFeedTopic:        "spot.rates",
+		LogLevel:             "info",
+		L1CacheSize:          4096,
+		L1CacheTTL:           200 * time.Millisecond,
 	}
 }
 
@@ -34,11 +56,15 @@ func DefaultConfig() Config {
 type Server struct {
 	cfg    Config
 	store  *Store
-	locks  *LockStore
+	locks  LockBackend
 	spot   *SpotService
 	pricer *Pricer
 	claim  *ClaimService
 	audit  *AuditLog
+	log    *logger
+	wsHub  *wsHub
+	feed   FeedSubscriber
+	poll   PollClient
 }
 
 // NewServer builds a Server with in-memory backing stores and seeded data.
@@ -50,6 +76,7 @@ func NewServer(cfg Config) *Server {
 	audit := NewAuditLog()
 	claim := NewClaimService(store, locks, spot, audit, cfg.SlippageToleranceBPS)
 	seedFeeSchedules(store)
+	pricer.ReloadIndex()
 	s := &Server{
 		cfg:    cfg,
 		store:  store,
@@ -58,7 +85,11 @@ func NewServer(cfg Config) *Server {
 		pricer: pricer,
 		claim:  claim,
 		audit:  audit,
+		wsHub:  newWSHub(),
 	}
+	spot.SetOnUpdate(func(pair string, r Rate) {
+		s.wsHub.fanout(pair, r)
+	})
 	return s
 }
 
@@ -88,8 +119,10 @@ func newMux() *http.ServeMux {
 func (s *Server) register(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", healthz)
 	mux.HandleFunc("/readyz", s.readyz)
+	mux.HandleFunc("/metrics", metricsHandler().ServeHTTP)
 	mux.HandleFunc("/v1/quotes", s.quotesHandler)
 	mux.HandleFunc("/v1/quotes/", s.quoteByIDHandler)
+	mux.HandleFunc("/v1/rates/subscribe", s.ratesSubscribeHandler)
 	mux.HandleFunc("/internal/v1/quotes/", s.internalQuoteHandler)
 	mux.HandleFunc("/internal/v1/fee-schedules/reload", s.feeSchedulesReload)
 	mux.HandleFunc("/v1/audit-events", s.auditEventsHandler)
@@ -100,6 +133,49 @@ func run(addr string) error {
 	return http.ListenAndServe(addr, requestIDMiddleware(newMux()))
 }
 
+// runWithConfig builds a server from cfg, wires the lock backend and logger,
+// and starts the HTTP server on cfg.Port. Blocks until the server exits or
+// ctx is canceled (graceful shutdown on ctx cancel).
+func runWithConfig(cfg Config, log *logger) error {
+	return runWithConfigCtx(context.Background(), cfg, log)
+}
+
+// runWithConfigCtx is the context-aware variant used by tests to shut the
+// server down cleanly.
+func runWithConfigCtx(ctx context.Context, cfg Config, log *logger) error {
+	locks := initLockBackend(cfg, log)
+	srv := NewServer(cfg)
+	srv.locks = locks
+	srv.log = log
+	mux := http.NewServeMux()
+	srv.register(mux)
+	h := requestIDMiddleware(mux)
+	h = metricsMiddleware(h)
+	stopSweep := srv.StartSweeper(60 * time.Second)
+	defer stopSweep()
+	stopRefresh := srv.startFeeScheduleRefresh(60 * time.Second)
+	defer stopRefresh()
+	if log != nil {
+		log.Info("listening", fStr("port", cfg.Port))
+	}
+	addr := ":" + cfg.Port
+	httpSrv := &http.Server{Addr: addr, Handler: h}
+	errCh := make(chan error, 1)
+	go func() { errCh <- httpSrv.ListenAndServe() }()
+	select {
+	case <-ctx.Done():
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = httpSrv.Shutdown(shutCtx)
+		<-errCh
+		closeLockBackend(locks)
+		return nil
+	case err := <-errCh:
+		closeLockBackend(locks)
+		return err
+	}
+}
+
 func healthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -108,6 +184,10 @@ func healthz(w http.ResponseWriter, r *http.Request) {
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	if !s.spot.IsReady() {
 		writeError(w, r, http.StatusServiceUnavailable, "not_ready", "spot cache cold")
+		return
+	}
+	if s.locks != nil && !s.locks.Ready() {
+		writeError(w, r, http.StatusServiceUnavailable, "not_ready", "lock store unreachable")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -173,6 +253,8 @@ func (s *Server) quotesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) singleQuote(w http.ResponseWriter, r *http.Request, body []byte) {
+	ctx, span := startSpan(r.Context(), "POST /v1/quotes")
+	defer span.End()
 	var req quoteRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, r, http.StatusBadRequest, "bad_request", "invalid JSON body")
@@ -182,17 +264,20 @@ func (s *Server) singleQuote(w http.ResponseWriter, r *http.Request, body []byte
 		writeErrorApp(w, r, err.(*AppError))
 		return
 	}
-	q, appErr := s.createQuote(req)
+	q, appErr := s.createQuote(ctx, req)
 	if appErr != nil {
 		writeErrorApp(w, r, appErr)
 		return
 	}
+	span.SetAttribute("quote_id", q.QuoteID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(q.toResponse())
 }
 
 func (s *Server) bulkQuotes(w http.ResponseWriter, r *http.Request, body []byte) {
+	ctx, span := startSpan(r.Context(), "POST /v1/quotes bulk")
+	defer span.End()
 	var req bulkRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, r, http.StatusBadRequest, "bad_request", "invalid JSON body")
@@ -203,9 +288,9 @@ func (s *Server) bulkQuotes(w http.ResponseWriter, r *http.Request, body []byte)
 		return
 	}
 	type itemResp struct {
-		Ok     bool        `json:"ok"`
-		Quote  *Quote      `json:"quote,omitempty"`
-		Error  string      `json:"error,omitempty"`
+		Ok    bool   `json:"ok"`
+		Quote *Quote `json:"quote,omitempty"`
+		Error string `json:"error,omitempty"`
 	}
 	resps := make([]itemResp, 0, len(req.Items))
 	for _, it := range req.Items {
@@ -213,7 +298,7 @@ func (s *Server) bulkQuotes(w http.ResponseWriter, r *http.Request, body []byte)
 			resps = append(resps, itemResp{Ok: false, Error: err.(*AppError).Code})
 			continue
 		}
-		q, appErr := s.createQuote(it)
+		q, appErr := s.createQuote(ctx, it)
 		if appErr != nil {
 			resps = append(resps, itemResp{Ok: false, Error: appErr.Code})
 			continue
@@ -225,12 +310,15 @@ func (s *Server) bulkQuotes(w http.ResponseWriter, r *http.Request, body []byte)
 	json.NewEncoder(w).Encode(map[string]any{"items": resps})
 }
 
-func (s *Server) createQuote(req quoteRequest) (*Quote, *AppError) {
+func (s *Server) createQuote(ctx context.Context, req quoteRequest) (*Quote, *AppError) {
+	_, span := startSpan(ctx, "Pricer.Compute")
+	defer span.End()
 	amount, _ := parseAmount(req.Amount)
 	res, err := s.pricer.Compute(req.From, req.To, amount, req.UserTier, req.Side)
 	if err != nil {
 		return nil, errSpotUnavailable
 	}
+	span.SetAttribute("source_venue", res.SourceVenue)
 	id := newQuoteID()
 	now := time.Now().UTC()
 	exp := now.Add(s.cfg.RateLockTTL)
@@ -251,16 +339,16 @@ func (s *Server) createQuote(req quoteRequest) (*Quote, *AppError) {
 		SourceVenue:  res.SourceVenue,
 		CreatedAt:    now,
 		ExpiresAt:    exp,
-		LockedRate:    res.Rate,
+		LockedRate:   res.Rate,
 		SpotPrice:     res.Spot,
 	}
 	s.store.SaveQuote(q)
 	lockPayload, _ := json.Marshal(map[string]any{
-		"rate":       res.Rate,
-		"from":       req.From,
-		"to":         req.To,
-		"amount":     req.Amount,
-		"expires_at": exp.Format(time.RFC3339Nano),
+		"rate":         res.Rate,
+		"from":         req.From,
+		"to":           req.To,
+		"amount":       req.Amount,
+		"expires_at":   exp.Format(time.RFC3339Nano),
 		"source_venue": res.SourceVenue,
 	})
 	s.locks.SetNX(lockKey(id), string(lockPayload), s.cfg.RateLockTTL)
@@ -293,6 +381,9 @@ func (s *Server) quoteByIDHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getQuote(w http.ResponseWriter, r *http.Request, id string) {
+	_, span := startSpan(r.Context(), "GET /v1/quotes/:id")
+	defer span.End()
+	span.SetAttribute("quote_id", id)
 	q := s.store.GetQuote(id)
 	if q == nil {
 		writeErrorApp(w, r, errNotFound)
@@ -309,6 +400,9 @@ func (s *Server) getQuote(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func (s *Server) refreshQuote(w http.ResponseWriter, r *http.Request, id string) {
+	_, span := startSpan(r.Context(), "POST /v1/quotes/:id/refresh")
+	defer span.End()
+	span.SetAttribute("quote_id", id)
 	old := s.store.GetQuote(id)
 	if old == nil {
 		writeErrorApp(w, r, errNotFound)
@@ -357,6 +451,7 @@ func (s *Server) refreshQuote(w http.ResponseWriter, r *http.Request, id string)
 	})
 	s.locks.SetNX(lockKey(newID), string(lockPayload), s.cfg.RateLockTTL)
 	s.audit.Append(AuditEvent{Type: "quote.issued", QuoteID: newID, UserTier: old.UserTier, SourceVenue: res.SourceVenue})
+	span.SetAttribute("new_quote_id", newID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(nq.toResponse())
@@ -388,9 +483,12 @@ func (s *Server) internalQuoteHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "bad_request", "claimed_by required")
 		return
 	}
+	_, span := startSpan(r.Context(), "POST /internal/v1/quotes/:id/claim")
+	defer span.End()
+	span.SetAttribute("quote_id", id)
 	res := s.claim.Claim(id, req.ClaimedBy)
 	if res.Reason != "" {
-		status := http.StatusConflict
+		globalMetrics.claimTotal.WithLabelValues(res.Reason).Inc()
 		switch res.Reason {
 		case "missing":
 			writeError(w, r, http.StatusNotFound, "not_found", "quote not found")
@@ -399,10 +497,11 @@ func (s *Server) internalQuoteHandler(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, http.StatusGone, "expired", "quote expired")
 			return
 		default:
-			writeError(w, r, status, res.Reason, "claim rejected: "+res.Reason)
+			writeError(w, r, http.StatusConflict, res.Reason, "claim rejected: "+res.Reason)
 			return
 		}
 	}
+	globalMetrics.claimTotal.WithLabelValues("ok").Inc()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(res.Quote.toResponse())
 }
@@ -414,6 +513,10 @@ func (s *Server) feeSchedulesReload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	seedFeeSchedules(s.store)
+	s.pricer.ReloadIndex()
+	if s.log != nil {
+		s.log.Info("fee schedules reloaded", fInt("count", s.pricer.index.Len()))
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"status": "reloaded"})
 }
@@ -484,6 +587,30 @@ func (s *Server) sweepExpired() {
 			s.audit.Append(AuditEvent{Type: "quote.expired", QuoteID: q.QuoteID, UserTier: q.UserTier, SourceVenue: q.SourceVenue})
 		}
 	}
+}
+
+// startFeeScheduleRefresh launches a background goroutine that re-seeds the
+// fee schedules on the given interval (Stage 3 hot-reload tick). Returns a stop
+// function. In production this would re-fetch from FEE_SCHEDULE_URL; here it
+// re-applies the seeded defaults to keep the in-memory index warm.
+func (s *Server) startFeeScheduleRefresh(interval time.Duration) func() {
+	stop := make(chan struct{})
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				seedFeeSchedules(s.store)
+				if s.log != nil {
+					s.log.Debug("fee schedules refreshed")
+				}
+			}
+		}
+	}()
+	return func() { close(stop) }
 }
 
 func readBody(r *http.Request) ([]byte, error) {

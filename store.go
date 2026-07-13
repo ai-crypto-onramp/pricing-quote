@@ -187,7 +187,37 @@ type lockEntry struct {
 	timer     *time.Timer
 }
 
-// LockStore is the in-memory locked-quote store with TTL and atomic claim.
+// LockBackend is the locked-quote store contract used by the server. The
+// in-memory LockStore satisfies it; redisLockBackend (redis_lock.go) is a
+// Redis-backed implementation wired when REDIS_URL is set.
+type LockBackend interface {
+	// SetNX sets key=value with ttl only if key is absent. Returns true if set.
+	SetNX(key, value string, ttl time.Duration) bool
+	// Get returns the value for key if present and not expired.
+	Get(key string) (string, bool)
+	// Del removes the key. Returns true if the key existed.
+	Del(key string) bool
+	// Claim atomically returns the value and deletes the key if present and
+	// not expired. Returns ("", false) otherwise.
+	Claim(key string) (string, bool)
+	// Ready reports whether the backing store is reachable. In-memory stores
+	// are always ready; the Redis adapter pings the server.
+	Ready() bool
+}
+
+// claimLuaScript is the Redis Lua script implementing an atomic claim: it
+// returns the prior value and deletes the key in a single round-trip when the
+// key exists and has not expired (TTL > 0). Used by redisLockBackend.
+const claimLuaScript = `local v = redis.call('GET', KEYS[1])
+if v == false then return nil end
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl == nil or ttl < 0 then return nil end
+redis.call('DEL', KEYS[1])
+return v
+`
+
+// LockStore is the in-memory LockBackend with TTL and atomic claim. It is the
+// default implementation used in tests and when REDIS_URL is unset.
 type LockStore struct {
 	mu    sync.Mutex
 	locks map[string]*lockEntry
@@ -197,6 +227,9 @@ type LockStore struct {
 func NewLockStore() *LockStore {
 	return &LockStore{locks: make(map[string]*lockEntry)}
 }
+
+// Ready reports whether the in-memory store is reachable (always true).
+func (l *LockStore) Ready() bool { return true }
 
 // SetNX sets key=value with ttl only if key is absent or expired. Returns true
 // if the value was set.

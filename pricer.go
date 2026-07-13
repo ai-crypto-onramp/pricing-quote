@@ -10,11 +10,25 @@ type Pricer struct {
 	store            *Store
 	spot             *SpotService
 	defaultSpreadBPS int
+	index            *feeIndex
+	fx               FXClient
 }
 
 // NewPricer returns a Pricer backed by the given store and spot service.
 func NewPricer(store *Store, spot *SpotService, defaultSpreadBPS int) *Pricer {
-	return &Pricer{store: store, spot: spot, defaultSpreadBPS: defaultSpreadBPS}
+	idx := newFeeIndex()
+	idx.Rebuild(store.FeeSchedules())
+	return &Pricer{store: store, spot: spot, defaultSpreadBPS: defaultSpreadBPS, index: idx}
+}
+
+// SetFXClient wires the fx-hedging client used for cross-pair (non-USD fiat) quotes.
+func (p *Pricer) SetFXClient(fx FXClient) { p.fx = fx }
+
+// ReloadIndex rebuilds the in-memory fee index from the store's current
+// schedules. Called after hot-reload.
+func (p *Pricer) ReloadIndex() {
+	p.index.Rebuild(p.store.FeeSchedules())
+	globalMetrics.loadedSchedules.Set(float64(p.index.Len()))
 }
 
 // ComputeResult is the output of Pricer.Compute.
@@ -42,6 +56,11 @@ func (p *Pricer) Compute(from, to string, amount float64, userTier, side string)
 	spreadBPS := p.defaultSpreadBPS
 	if sched != nil {
 		spreadBPS = sched.SpreadBPS
+	} else {
+		// Unknown combination: fall back to DEFAULT_SPREAD_BPS with a warning.
+		logWarn("no fee schedule match; using default spread",
+			fStr("tier", userTier), fStr("asset", asset), fStr("side", side),
+			fInt("spread_bps", p.defaultSpreadBPS))
 	}
 
 	spot := r.Mid
@@ -79,6 +98,11 @@ func (p *Pricer) Compute(from, to string, amount float64, userTier, side string)
 }
 
 func (p *Pricer) matchSchedule(tier, asset, side string, amount float64) *FeeSchedule {
+	if s := p.index.Lookup(tier, asset, side, amount); s != nil {
+		return s
+	}
+	// Fallback: linear scan of store (covers schedules with side="" or other
+	// edge cases not indexed by the strict key).
 	all := p.store.FeeSchedules()
 	var best *FeeSchedule
 	for i := range all {

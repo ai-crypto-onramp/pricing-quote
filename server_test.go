@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -504,7 +505,7 @@ func TestLockStoreClaim(t *testing.T) {
 func TestSweeperMarksExpired(t *testing.T) {
 	s := helperServer(t)
 	s.cfg.RateLockTTL = 30 * time.Millisecond
-	q, _ := s.createQuote(quoteRequest{From: "USD", To: "BTC", Amount: "100", UserTier: "tier_1", Side: "buy"})
+	q, _ := s.createQuote(context.Background(), quoteRequest{From: "USD", To: "BTC", Amount: "100", UserTier: "tier_1", Side: "buy"})
 	stop := s.StartSweeper(20 * time.Millisecond)
 	defer stop()
 	time.Sleep(100 * time.Millisecond)

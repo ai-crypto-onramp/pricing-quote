@@ -89,6 +89,12 @@ type SpotService struct {
 	venueOrder    []string
 	errorThreshold int
 	ready         bool
+	// onUpdate, if set, is invoked with the pair key and the new Rate after
+	// every Update. Used to fan out to WebSocket subscribers.
+	onUpdate func(string, Rate)
+	// pollHook, if set, is the synchronous poll fallback invoked when the
+	// cached rate is stale beyond MAX_STALE_AGE_MS.
+	pollHook func(from, to string) (Rate, bool)
 }
 
 // NewSpotService builds a SpotService with default seed rates.
@@ -129,10 +135,22 @@ func pairKey(from, to string) string { return from + "-" + to }
 // Update inserts or refreshes a spot rate in the cache and last-good map.
 func (s *SpotService) Update(r Rate) {
 	r.TS = time.Now().UTC()
-	s.cache.put(pairKey(r.From, r.To), r)
+	key := pairKey(r.From, r.To)
+	s.cache.put(key, r)
 	s.mu.Lock()
-	s.lastGood[pairKey(r.From, r.To)] = r
+	s.lastGood[key] = r
 	s.mu.Unlock()
+	if s.onUpdate != nil {
+		s.onUpdate(key, r)
+	}
+}
+
+// SetOnUpdate installs a callback invoked after every Update. Used to fan out
+// L1 cache updates to WebSocket subscribers.
+func (s *SpotService) SetOnUpdate(fn func(string, Rate)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onUpdate = fn
 }
 
 // IsReady reports whether the spot service has a warm cache (seeded).
@@ -156,23 +174,44 @@ func (s *SpotService) Get(from, to string) (Rate, error) {
 	key := pairKey(from, to)
 	r, ok := s.cache.get(key)
 	if ok && time.Since(r.TS) <= s.maxStaleAge {
+		globalMetrics.spotCacheHits.Inc()
 		return r, nil
 	}
 	if ok {
+		// Stale entry beyond threshold: force a synchronous poll if a poll
+		// hook is configured; otherwise reseed from defaults.
+		if s.pollHook != nil {
+			if pr, pok := s.pollHook(from, to); pok {
+				globalMetrics.spotCacheMisses.Inc()
+				return pr, nil
+			}
+		}
 		s.ReSeed()
 		r, ok = s.cache.get(key)
 		if ok {
+			globalMetrics.spotCacheMisses.Inc()
 			return r, nil
 		}
 	}
+	globalMetrics.spotCacheMisses.Inc()
 	s.mu.Lock()
 	lg, hasLast := s.lastGood[key]
 	s.mu.Unlock()
 	if hasLast {
 		lg.Stale = true
+		globalMetrics.quoteSourceStale.Inc()
 		return lg, nil
 	}
 	return Rate{}, fmt.Errorf("no spot rate for pair %s-%s", from, to)
+}
+
+// SetPollHook installs a synchronous poll fallback invoked when the cached
+// rate is stale beyond MAX_STALE_AGE_MS. Returning (Rate, true) refreshes the
+// cache; (Rate{}, false) falls back to reseed/last-good.
+func (s *SpotService) SetPollHook(fn func(from, to string) (Rate, bool)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pollHook = fn
 }
 
 // RecordVenueError increments the error counter for a venue and marks it down
@@ -217,4 +256,48 @@ func (s *SpotService) SetMaxStaleAge(d time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.maxStaleAge = d
+}
+
+// FetchVenueOrder returns the configured venue order (priority order). Used
+// by the failover logic in Get/Poll.
+func (s *SpotService) FetchVenueOrder() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.venueOrder))
+	copy(out, s.venueOrder)
+	return out
+}
+
+// AdvanceVenue records a failover from one venue to the next in priority order,
+// emits a structured runbook-style log, and increments the venue_failover
+// metric. Returns the next venue name and true if a failover occurred.
+func (s *SpotService) AdvanceVenue(from string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, v := range s.venueOrder {
+		if v == from && i+1 < len(s.venueOrder) {
+			next := s.venueOrder[i+1]
+			logWarn("venue failover",
+				fStr("from", from), fStr("to", next),
+				fStr("reason", "error_threshold_reached"))
+			globalMetrics.venueFailover.WithLabelValues(from, next).Inc()
+			return next, true
+		}
+	}
+	return from, false
+}
+
+// HalfOpenProbe resets a single venue's down flag to allow a probe request
+// through (circuit-breaker half-open state). Returns true if the venue was down.
+func (s *SpotService) HalfOpenProbe(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.venues[name]
+	if !ok || !v.Down {
+		return false
+	}
+	v.Down = false
+	v.Errors = 0
+	logInfo("venue half-open probe", fStr("venue", name))
+	return true
 }

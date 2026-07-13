@@ -10,12 +10,12 @@ Establish the durable storage layer (OLTP schema for `quotes`, `fee_schedules`, 
 
 ### Tasks
 
-- [ ] Define Go migrations for `quotes` table (quote_id PK, from, to, amount, rate, spread_bps, fee, fee_currency, total, crypto_amount, user_tier, status, created_at, expires_at, claimed_at, claimed_by, source_venue) with indexes on `status` and `expires_at`.
-- [ ] Define migrations for `fee_schedules` (id, user_tier, asset, size_band_min, size_band_max, side, spread_bps, fee_type, fee_amount, fee_bps, enabled, updated_at).
-- [ ] Define migrations for `rate_sources` (id, name, priority, enabled, endpoint_ref, weight, created_at, updated_at).
-- [ ] Implement a `Store` interface wrapping the OLTP connection pool with CRUD methods for each table.
-- [ ] Implement a Redis `LockStore` with `SetNX(key, value, ttl)`, `Get(key)`, `Del(key)`, and a Lua-based atomic claim helper.
-- [ ] Wire configuration (`REDIS_URL`, `DATABASE_URL`) and a connection health check on startup.
+- [x] Define Go migrations for `quotes` table (quote_id PK, from, to, amount, rate, spread_bps, fee, fee_currency, total, crypto_amount, user_tier, status, created_at, expires_at, claimed_at, claimed_by, source_venue) with indexes on `status` and `expires_at`.
+- [x] Define migrations for `fee_schedules` (id, user_tier, asset, size_band_min, size_band_max, side, spread_bps, fee_type, fee_amount, fee_bps, enabled, updated_at).
+- [x] Define migrations for `rate_sources` (id, name, priority, enabled, endpoint_ref, weight, created_at, updated_at).
+- [x] Implement a `Store` interface wrapping the OLTP connection pool with CRUD methods for each table.
+- [x] Implement a Redis `LockStore` with `SetNX(key, value, ttl)`, `Get(key)`, `Del(key)`, and a Lua-based atomic claim helper.
+- [x] Wire configuration (`REDIS_URL`, `DATABASE_URL`) and a connection health check on startup.
 - [ ] Add unit tests for `Store` and `LockStore` against a test Redis and a sqlite/postgres test container.
 
 ### Acceptance criteria
@@ -32,13 +32,13 @@ Ingest real-time spot rates from `exchange-connectors` via the pub/sub topic wit
 
 ### Tasks
 
-- [ ] Implement an LRU cache keyed by `from-to` pair storing `{bid, ask, mid, ts, source_venue}` with `L1_CACHE_SIZE` and `L1_CACHE_TTL_MS`.
-- [ ] Implement a pub/sub subscriber for `RATE_FEED_TOPIC` that updates the L1 cache on every message.
-- [ ] Implement an on-demand poll client against `EXCHANGE_CONNECTOR_URL` for one or more pairs, used as fallback when the cache is empty or stale beyond `MAX_STALE_AGE_MS`.
-- [ ] Define a `RateSource` selector that picks the best bid/ask across enabled `rate_sources` rows (priority then weight).
-- [ ] Expose a `SpotService.Get(pair) (Rate, error)` used by the quote engine.
-- [ ] Emit Prometheus metrics: `spot_cache_hits`, `spot_cache_misses`, `spot_poll_total`, `spot_pubsub_lag_ms`.
-- [ ] Add unit + integration tests for cache TTL, pub/sub update, and poll fallback.
+- [x] Implement an LRU cache keyed by `from-to` pair storing `{bid, ask, mid, ts, source_venue}` with `L1_CACHE_SIZE` and `L1_CACHE_TTL_MS`.
+- [x] Implement a pub/sub subscriber for `RATE_FEED_TOPIC` that updates the L1 cache on every message.
+- [x] Implement an on-demand poll client against `EXCHANGE_CONNECTOR_URL` for one or more pairs, used as fallback when the cache is empty or stale beyond `MAX_STALE_AGE_MS`.
+- [x] Define a `RateSource` selector that picks the best bid/ask across enabled `rate_sources` rows (priority then weight).
+- [x] Expose a `SpotService.Get(pair) (Rate, error)` used by the quote engine.
+- [x] Emit Prometheus metrics: `spot_cache_hits`, `spot_cache_misses`, `spot_poll_total`, `spot_pubsub_lag_ms`.
+- [x] Add unit + integration tests for cache TTL, pub/sub update, and poll fallback.
 
 ### Acceptance criteria
 
@@ -54,13 +54,13 @@ Load `fee_schedules` into memory, hot-reload on config change, and implement spr
 
 ### Tasks
 
-- [ ] Implement a `FeeSchedule` in-memory index keyed by `(user_tier, asset, side, size_band)` with O(1) lookup.
+- [x] Implement a `FeeSchedule` in-memory index keyed by `(user_tier, asset, side, size_band)` with O(1) lookup.
 - [ ] Implement a loader that fetches `fee_schedules` from `FEE_SCHEDULE_URL` on startup and on a 60s refresh tick.
-- [ ] Implement a hot-reload path triggered by a config-change signal (HTTP `POST /internal/v1/fee-schedules/reload`).
-- [ ] Implement `Pricer.Compute(pair, amount, user_tier, side) (rate, spread_bps, fee, total, crypto_amount)`.
-- [ ] Apply `DEFAULT_SPREAD_BPS` when no schedule matches.
-- [ ] Add structured logging and a Prometheus gauge for loaded schedule count.
-- [ ] Add unit tests covering tier/asset/size-band matching, default fallback, and hot-reload.
+- [x] Implement a hot-reload path triggered by a config-change signal (HTTP `POST /internal/v1/fee-schedules/reload`).
+- [x] Implement `Pricer.Compute(pair, amount, user_tier, side) (rate, spread_bps, fee, total, crypto_amount)`.
+- [x] Apply `DEFAULT_SPREAD_BPS` when no schedule matches.
+- [x] Add structured logging and a Prometheus gauge for loaded schedule count.
+- [x] Add unit tests covering tier/asset/size-band matching, default fallback, and hot-reload.
 
 ### Acceptance criteria
 
@@ -76,13 +76,13 @@ Implement the `POST /v1/quotes` (single + bulk) and `GET /v1/quotes/:id` endpoin
 
 ### Tasks
 
-- [ ] Define request/response DTOs matching the README contract (single and bulk `items` shapes).
-- [ ] Implement `POST /v1/quotes`: compute price, `quote_id = q_ULID`, write Redis lock with `EX = RATE_LOCK_TTL_SECONDS` + `NX`, persist `quotes` row, return `201`.
-- [ ] Implement bulk path honoring `BULK_QUOTE_MAX_ITEMS`; per-item errors do not abort the batch.
-- [ ] Implement `GET /v1/quotes/:id`: load row, return `404` if missing, `410` if expired, otherwise the full payload with `status`.
-- [ ] Add input validation (currency codes, amount > 0, supported tiers, side in {buy, sell}).
-- [ ] Add Prometheus histograms for quote latency (`quote_request_seconds`) and counters per status code.
-- [ ] Add unit + HTTP integration tests for single, bulk, validation errors, and lock write.
+- [x] Define request/response DTOs matching the README contract (single and bulk `items` shapes).
+- [x] Implement `POST /v1/quotes`: compute price, `quote_id = q_ULID`, write Redis lock with `EX = RATE_LOCK_TTL_SECONDS` + `NX`, persist `quotes` row, return `201`.
+- [x] Implement bulk path honoring `BULK_QUOTE_MAX_ITEMS`; per-item errors do not abort the batch.
+- [x] Implement `GET /v1/quotes/:id`: load row, return `404` if missing, `410` if expired, otherwise the full payload with `status`.
+- [x] Add input validation (currency codes, amount > 0, supported tiers, side in {buy, sell}).
+- [x] Add Prometheus histograms for quote latency (`quote_request_seconds`) and counters per status code.
+- [x] Add unit + HTTP integration tests for single, bulk, validation errors, and lock write.
 
 ### Acceptance criteria
 
@@ -99,12 +99,12 @@ Implement quote refresh, expiry handling, and the internal atomic claim endpoint
 
 ### Tasks
 
-- [ ] Implement `POST /v1/quotes/:id/refresh`: cancel the old quote (status `canceled`, delete lock key), compute a new quote, persist and return it.
-- [ ] Implement `POST /internal/v1/quotes/:id/claim`: run the Lua claim script that checks `expires_at`, compares current spot vs. locked rate against `SLIPPAGE_TOLERANCE_BPS`, and `DEL`s the key atomically.
-- [ ] Return `409` with a reason (`expired`, `missing`, `slippage_exceeded`, `already_claimed`) on failure and emit `quote.slippage_rejected` where applicable.
-- [ ] On success, update the `quotes` row to `claimed` with `claimed_at` and `claimed_by`.
-- [ ] Add a background sweeper that marks un-claimed expired rows as `expired` for audit completeness.
-- [ ] Add unit + integration tests covering refresh, claim success, and each `409` reason.
+- [x] Implement `POST /v1/quotes/:id/refresh`: cancel the old quote (status `canceled`, delete lock key), compute a new quote, persist and return it.
+- [x] Implement `POST /internal/v1/quotes/:id/claim`: run the Lua claim script that checks `expires_at`, compares current spot vs. locked rate against `SLIPPAGE_TOLERANCE_BPS`, and `DEL`s the key atomically.
+- [x] Return `409` with a reason (`expired`, `missing`, `slippage_exceeded`, `already_claimed`) on failure and emit `quote.slippage_rejected` where applicable.
+- [x] On success, update the `quotes` row to `claimed` with `claimed_at` and `claimed_by`.
+- [x] Add a background sweeper that marks un-claimed expired rows as `expired` for audit completeness.
+- [x] Add unit + integration tests covering refresh, claim success, and each `409` reason.
 
 ### Acceptance criteria
 
@@ -121,12 +121,12 @@ Add stale-rate protection, automatic source failover across venues, and graceful
 
 ### Tasks
 
-- [ ] Enforce `MAX_STALE_AGE_MS` in `SpotService.Get`: force a poll when the cached entry is older than the threshold.
-- [ ] Implement venue failover ordered by `rate_sources.priority`; on N errors from a venue, advance to the next.
-- [ ] When all sources fail, serve the last-good cached rate and tag the response with a `stale` flag in logs and a `quote_source_stale` metric.
-- [ ] Add circuit-breaker state per venue with configurable thresholds and half-open probing.
-- [ ] Add integration tests simulating venue errors and pub/sub outage.
-- [ ] Add runbook-style structured logs for failover transitions.
+- [x] Enforce `MAX_STALE_AGE_MS` in `SpotService.Get`: force a poll when the cached entry is older than the threshold.
+- [x] Implement venue failover ordered by `rate_sources.priority`; on N errors from a venue, advance to the next.
+- [x] When all sources fail, serve the last-good cached rate and tag the response with a `stale` flag in logs and a `quote_source_stale` metric.
+- [x] Add circuit-breaker state per venue with configurable thresholds and half-open probing.
+- [x] Add integration tests simulating venue errors and pub/sub outage.
+- [x] Add runbook-style structured logs for failover transitions.
 
 ### Acceptance criteria
 
@@ -142,13 +142,13 @@ Implement the WebSocket live-rates subscription (`WS /v1/rates/subscribe`) and i
 
 ### Tasks
 
-- [ ] Implement a WebSocket upgrader and a per-connection subscription registry keyed by client-requested pairs.
-- [ ] Fan out L1 cache updates to subscribed clients with `{pair, rate, ts, source}` frames.
-- [ ] Handle subscribe/unsubscribe messages and connection lifecycle (ping/pong, backpressure, graceful close).
-- [ ] Integrate `fx-hedging` client: for non-USD `from`, fetch the fiat→USD leg and combine with the crypto spot to produce the cross pair rate.
-- [ ] Apply hedge-cost markup from `fx-hedging` to the spread for pre-hedged tiers.
-- [ ] Add metrics for active WS connections, messages sent/dropped, and FX lookup latency.
-- [ ] Add unit + integration tests for WS fan-out and FX-cross pricing.
+- [x] Implement a WebSocket upgrader and a per-connection subscription registry keyed by client-requested pairs.
+- [x] Fan out L1 cache updates to subscribed clients with `{pair, rate, ts, source}` frames.
+- [x] Handle subscribe/unsubscribe messages and connection lifecycle (ping/pong, backpressure, graceful close).
+- [x] Integrate `fx-hedging` client: for non-USD `from`, fetch the fiat→USD leg and combine with the crypto spot to produce the cross pair rate.
+- [x] Apply hedge-cost markup from `fx-hedging` to the spread for pre-hedged tiers.
+- [x] Add metrics for active WS connections, messages sent/dropped, and FX lookup latency.
+- [x] Add unit + integration tests for WS fan-out and FX-cross pricing.
 
 ### Acceptance criteria
 
@@ -165,13 +165,13 @@ Emit audit events for every quote lifecycle transition, add OpenTelemetry tracin
 
 ### Tasks
 
-- [ ] Emit `quote.issued`, `quote.refreshed`, `quote.expired`, `quote.claimed`, `quote.slippage_rejected` to `audit-event-log` asynchronously with at-least-once semantics and a bounded queue.
-- [ ] Add OpenTelemetry spans around `POST /v1/quotes`, `GET /v1/quotes/:id`, `refresh`, `claim`, and the spot lookup; export to `OTEL_EXPORTER_OTLP_ENDPOINT`.
-- [ ] Raise unit + integration test coverage to ≥ 80%; add a `make cover` target enforcing the gate.
-- [ ] Add a multi-stage Dockerfile building a distroless final image with healthcheck.
-- [ ] Add a `/healthz` and `/readyz` endpoint reflecting Redis + OLTP + spot cache readiness.
-- [ ] Update CI to run `go vet`, `go test -race`, coverage upload, and the Docker build.
-- [ ] Finalize the Makefile with `build`, `test`, `cover`, `lint`, `docker` targets.
+- [x] Emit `quote.issued`, `quote.refreshed`, `quote.expired`, `quote.claimed`, `quote.slippage_rejected` to `audit-event-log` asynchronously with at-least-once semantics and a bounded queue.
+- [x] Add OpenTelemetry spans around `POST /v1/quotes`, `GET /v1/quotes/:id`, `refresh`, `claim`, and the spot lookup; export to `OTEL_EXPORTER_OTLP_ENDPOINT`.
+- [x] Raise unit + integration test coverage to ≥ 80%; add a `make cover` target enforcing the gate.
+- [x] Add a multi-stage Dockerfile building a distroless final image with healthcheck.
+- [x] Add a `/healthz` and `/readyz` endpoint reflecting Redis + OLTP + spot cache readiness.
+- [x] Update CI to run `go vet`, `go test -race`, coverage upload, and the Docker build.
+- [x] Finalize the Makefile with `build`, `test`, `cover`, `lint`, `docker` targets.
 
 ### Acceptance criteria
 
