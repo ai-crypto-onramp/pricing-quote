@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS rate_sources;
+DROP TABLE IF EXISTS fee_schedules;
+DROP TABLE IF EXISTS quotes;
