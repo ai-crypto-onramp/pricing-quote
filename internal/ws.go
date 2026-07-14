@@ -1,4 +1,4 @@
-package main
+package pricing
 
 import (
 	"crypto/sha1"

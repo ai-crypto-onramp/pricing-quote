@@ -1,4 +1,4 @@
-package main
+package pricing
 
 import (
 	"math"
@@ -59,7 +59,7 @@ func (p *Pricer) Compute(from, to string, amount float64, userTier, side string)
 	} else {
 		// Unknown combination: fall back to DEFAULT_SPREAD_BPS with a warning.
 		logWarn("no fee schedule match; using default spread",
-			fStr("tier", userTier), fStr("asset", asset), fStr("side", side),
+			FStr("tier", userTier), FStr("asset", asset), FStr("side", side),
 			fInt("spread_bps", p.defaultSpreadBPS))
 	}
 

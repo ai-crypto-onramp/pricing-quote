@@ -1,4 +1,4 @@
-package main
+package pricing
 
 import (
 	"bufio"
@@ -207,7 +207,7 @@ func TestReadWSFrameMaskedText(t *testing.T) {
 	}
 }
 
-// ---------- runWithConfig integration ----------
+// ---------- RunWithConfig integration ----------
 
 func TestRunWithConfigHealthz(t *testing.T) {
 	// Find a free port.
@@ -221,12 +221,12 @@ func TestRunWithConfigHealthz(t *testing.T) {
 	t.Setenv("PORT", port)
 	t.Setenv("REDIS_URL", "") // force in-memory
 	cfg := LoadConfig()
-	log := newLogger("error")
+	log := NewLogger("error")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		_ = runWithConfigCtx(ctx, cfg, log)
+		_ = RunWithConfigCtx(ctx, cfg, log)
 		close(done)
 	}()
 	defer func() { cancel(); <-done }()

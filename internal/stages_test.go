@@ -1,4 +1,4 @@
-package main
+package pricing
 
 import (
 	"context"
@@ -482,7 +482,7 @@ func TestInitLockBackendFallsBackWhenRedisDown(t *testing.T) {
 
 func TestServerWithLogger(t *testing.T) {
 	s := NewServer(DefaultConfig())
-	s.log = newLogger("debug")
+	s.log = NewLogger("debug")
 	if s.log == nil {
 		t.Fatal("logger nil")
 	}

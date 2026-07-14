@@ -1,4 +1,4 @@
-package main
+package pricing
 
 import (
 	"log"
@@ -23,8 +23,8 @@ const (
 	lvlError
 )
 
-// newLogger builds a logger from the configured LOG_LEVEL (default info).
-func newLogger(level string) *logger {
+// NewLogger builds a logger from the configured LOG_LEVEL (default info).
+func NewLogger(level string) *logger {
 	l := &logger{std: log.New(os.Stdout, "", log.LstdFlags|log.LUTC)}
 	switch strings.ToLower(strings.TrimSpace(level)) {
 	case "debug":
@@ -41,7 +41,7 @@ func newLogger(level string) *logger {
 
 // pkgLogger is a default logger used by package-level log helpers (logWarn,
 // logInfo) when no Server logger is configured. It defaults to info level.
-var pkgLogger = newLogger("info")
+var pkgLogger = NewLogger("info")
 
 func setPkgLogger(l *logger) { if l != nil { pkgLogger = l } }
 
@@ -79,9 +79,9 @@ type field struct {
 	v  any
 }
 
-func fStr(k, v string) field    { return field{k: k, v: v} }
+func FStr(k, v string) field    { return field{k: k, v: v} }
 func fInt(k string, v int) field  { return field{k: k, v: v} }
-func fErr(err error) field       { return field{k: "err", v: err.Error()} }
+func FErr(err error) field       { return field{k: "err", v: err.Error()} }
 
 func (f field) json() string {
 	switch v := f.v.(type) {

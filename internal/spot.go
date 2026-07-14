@@ -1,4 +1,4 @@
-package main
+package pricing
 
 import (
 	"container/list"
@@ -278,8 +278,8 @@ func (s *SpotService) AdvanceVenue(from string) (string, bool) {
 		if v == from && i+1 < len(s.venueOrder) {
 			next := s.venueOrder[i+1]
 			logWarn("venue failover",
-				fStr("from", from), fStr("to", next),
-				fStr("reason", "error_threshold_reached"))
+				FStr("from", from), FStr("to", next),
+				FStr("reason", "error_threshold_reached"))
 			globalMetrics.venueFailover.WithLabelValues(from, next).Inc()
 			return next, true
 		}
@@ -298,6 +298,6 @@ func (s *SpotService) HalfOpenProbe(name string) bool {
 	}
 	v.Down = false
 	v.Errors = 0
-	logInfo("venue half-open probe", fStr("venue", name))
+	logInfo("venue half-open probe", FStr("venue", name))
 	return true
 }

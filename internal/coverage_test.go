@@ -1,4 +1,4 @@
-package main
+package pricing
 
 import (
 	"context"
@@ -32,7 +32,7 @@ func TestStrErr(t *testing.T) {
 }
 
 func TestLoggerLevels(t *testing.T) {
-	l := newLogger("error")
+	l := NewLogger("error")
 	l.Debug("no") // below level, no-op
 	l.Info("no")  // below level, no-op
 	l.Warn("no") // below level, no-op
@@ -40,7 +40,7 @@ func TestLoggerLevels(t *testing.T) {
 	setPkgLogger(l)
 	logWarn("should-be-suppressed")
 	// restore
-	setPkgLogger(newLogger("info"))
+	setPkgLogger(NewLogger("info"))
 }
 
 func TestFormatAny(t *testing.T) {
@@ -144,7 +144,7 @@ func TestCloseLockBackendNoopOnMemory(t *testing.T) {
 func TestInitLockBackendEmptyURL(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.RedisURL = ""
-	b := initLockBackend(cfg, newLogger("info"))
+	b := initLockBackend(cfg, NewLogger("info"))
 	if b == nil {
 		t.Fatal("nil backend")
 	}
@@ -249,7 +249,7 @@ func TestQuoteToResponseClaimedFields(t *testing.T) {
 func TestRunHealthcheckFails(t *testing.T) {
 	// No server running on this port → should exit 1.
 	t.Setenv("PORT", "65535")
-	if rc := runHealthcheck(); rc == 0 {
+	if rc := RunHealthcheck(); rc == 0 {
 		t.Fatal("expected non-zero exit when no server")
 	}
 }
@@ -269,7 +269,7 @@ func TestRunHealthcheckSucceeds(t *testing.T) {
 	// Temporarily replace envOr behavior via PORT env.
 	// healthcheck uses localhost:PORT, and httptest listens on 127.0.0.1.
 	t.Setenv("PORT", addr)
-	if rc := runHealthcheck(); rc != 0 {
+	if rc := RunHealthcheck(); rc != 0 {
 		t.Fatalf("expected 0 exit, got %d", rc)
 	}
 }

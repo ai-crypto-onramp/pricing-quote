@@ -1,13 +1,13 @@
 .PHONY: build test test-race cover lint vet docker docker-run clean run
 
 build:
-	go build -o bin/server .
+	go build -o bin/server ./cmd/pricing-quote
 
 test:
-	go test ./... -race -coverprofile=coverage.out -coverpkg=./...
+	go test ./cmd/... ./internal/... -race -coverprofile=coverage.out -coverpkg=./cmd/...,./internal/...
 
 test-race:
-	go test -race ./...
+	go test -race ./cmd/... ./internal/...
 
 cover: test
 	@go tool cover -func=coverage.out | tail -1
@@ -20,7 +20,7 @@ vet:
 	go vet ./...
 
 run:
-	go run .
+	go run ./cmd/pricing-quote
 
 docker:
 	docker build -t ai-crypto-onramp/pricing-quote .

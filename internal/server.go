@@ -1,4 +1,4 @@
-package main
+package pricing
 
 import (
 	"context"
@@ -133,16 +133,16 @@ func run(addr string) error {
 	return http.ListenAndServe(addr, requestIDMiddleware(newMux()))
 }
 
-// runWithConfig builds a server from cfg, wires the lock backend and logger,
+// RunWithConfig builds a server from cfg, wires the lock backend and logger,
 // and starts the HTTP server on cfg.Port. Blocks until the server exits or
 // ctx is canceled (graceful shutdown on ctx cancel).
-func runWithConfig(cfg Config, log *logger) error {
-	return runWithConfigCtx(context.Background(), cfg, log)
+func RunWithConfig(cfg Config, log *logger) error {
+	return RunWithConfigCtx(context.Background(), cfg, log)
 }
 
-// runWithConfigCtx is the context-aware variant used by tests to shut the
+// RunWithConfigCtx is the context-aware variant used by tests to shut the
 // server down cleanly.
-func runWithConfigCtx(ctx context.Context, cfg Config, log *logger) error {
+func RunWithConfigCtx(ctx context.Context, cfg Config, log *logger) error {
 	locks := initLockBackend(cfg, log)
 	srv := NewServer(cfg)
 	srv.locks = locks
@@ -157,7 +157,7 @@ func runWithConfigCtx(ctx context.Context, cfg Config, log *logger) error {
 	stopRefresh := srv.startFeeScheduleRefresh(60 * time.Second)
 	defer stopRefresh()
 	if log != nil {
-		log.Info("listening", fStr("port", cfg.Port))
+		log.Info("listening", FStr("port", cfg.Port))
 	}
 	addr := ":" + cfg.Port
 	httpSrv := &http.Server{Addr: addr, Handler: h}
