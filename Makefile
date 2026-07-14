@@ -1,13 +1,13 @@
-.PHONY: build test cover lint docker-build docker-run clean run \
+.PHONY: build test coverage lint docker-build docker-run clean run \
 	migrate-up migrate-down migrate-new
 
 build:
-	go build -o bin/server ./cmd/pricing-quote
+	go build -o bin/pricing-quote ./cmd/pricing-quote
 
 test:
 	go test ./cmd/... ./internal/... -race -coverprofile=coverage.out -coverpkg=./cmd/...,./internal/...
 
-cover: test
+coverage: test
 	@go tool cover -func=coverage.out | tail -1
 	@echo "Coverage report: coverage.out (html: go tool cover -html=coverage.out)"
 
@@ -18,10 +18,10 @@ run:
 	go run ./cmd/pricing-quote
 
 migrate-up:
-	go run ./cmd/migrate -direction up
+	go run ./cmd/migrate --up
 
 migrate-down:
-	go run ./cmd/migrate -direction down
+	go run ./cmd/migrate --down
 
 migrate-new:
 	@test -n "$(NAME)" || (echo "usage: make migrate-new NAME=add_widgets" && exit 1)
