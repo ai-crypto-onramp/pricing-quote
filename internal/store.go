@@ -77,7 +77,6 @@ type Store struct {
 	quotes    map[string]*Quote
 	schedules []FeeSchedule
 	sources   map[string]*RateSource
-	nextID    int
 }
 
 // NewStore returns an empty in-memory Store.

@@ -20,12 +20,10 @@ func (e *AppError) Unwrap() error { return e }
 var (
 	errNotFound         = &AppError{Status: http.StatusNotFound, Code: "not_found", Message: "quote not found"}
 	errExpired          = &AppError{Status: http.StatusGone, Code: "expired", Message: "quote expired"}
-	errBadJSON          = &AppError{Status: http.StatusBadRequest, Code: "bad_request", Message: "invalid JSON body"}
 	errBadCurrency      = &AppError{Status: http.StatusBadRequest, Code: "invalid_currency", Message: "currency code must be 3-letter uppercase or a crypto symbol"}
 	errBadAmount        = &AppError{Status: http.StatusBadRequest, Code: "invalid_amount", Message: "amount must be > 0"}
 	errBadTier          = &AppError{Status: http.StatusBadRequest, Code: "invalid_tier", Message: "unsupported user_tier"}
 	errBadSide          = &AppError{Status: http.StatusBadRequest, Code: "invalid_side", Message: "side must be buy or sell"}
-	errTooManyItems     = &AppError{Status: http.StatusBadRequest, Code: "too_many_items", Message: "bulk quote exceeds max items"}
 	errSpotUnavailable  = &AppError{Status: http.StatusServiceUnavailable, Code: "spot_unavailable", Message: "spot rate unavailable"}
 )
 
