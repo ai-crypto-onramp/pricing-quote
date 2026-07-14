@@ -161,7 +161,7 @@ Implement the WebSocket live-rates subscription (`WS /v1/rates/subscribe`) and i
 
 ### Goal
 
-Emit audit events for every quote lifecycle transition, add OpenTelemetry tracing, and round out tests, coverage gates, and the production Docker image.
+Emit audit events for every quote lifecycle transition, add OpenTelemetry tracing, and round out tests and the production Docker image.
 
 ### Tasks
 
