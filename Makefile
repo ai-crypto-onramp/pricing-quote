@@ -1,4 +1,4 @@
-.PHONY: build test test-race cover lint vet docker docker-run clean run
+.PHONY: build test test-race cover lint docker docker-run clean run
 
 build:
 	go build -o bin/server ./cmd/pricing-quote
@@ -13,11 +13,8 @@ cover: test
 	@go tool cover -func=coverage.out | tail -1
 	@echo "Coverage report: coverage.out (html: go tool cover -html=coverage.out)"
 
-lint: vet
-	@echo "lint OK (go vet)"
-
-vet:
-	go vet ./...
+lint:
+	golangci-lint run
 
 run:
 	go run ./cmd/pricing-quote
