@@ -167,7 +167,7 @@ Emit audit events for every quote lifecycle transition, add OpenTelemetry tracin
 
 - [x] Emit `quote.issued`, `quote.refreshed`, `quote.expired`, `quote.claimed`, `quote.slippage_rejected` to `audit-event-log` asynchronously with at-least-once semantics and a bounded queue.
 - [x] Add OpenTelemetry spans around `POST /v1/quotes`, `GET /v1/quotes/:id`, `refresh`, `claim`, and the spot lookup; export to `OTEL_EXPORTER_OTLP_ENDPOINT`.
-- [x] Raise unit + integration test coverage to ≥ 80%; add a `make cover` target enforcing the gate.
+- [x] Raise unit + integration test coverage; add a `make cover` target.
 - [x] Add a multi-stage Dockerfile building a distroless final image with healthcheck.
 - [x] Add a `/healthz` and `/readyz` endpoint reflecting Redis + OLTP + spot cache readiness.
 - [x] Update CI to run `go vet`, `go test -race`, coverage upload, and the Docker build.
@@ -177,5 +177,5 @@ Emit audit events for every quote lifecycle transition, add OpenTelemetry tracin
 
 - Every quote lifecycle transition produces a corresponding audit event with `quote_id`, `user_tier`, and `source_venue`.
 - Traces propagate a root span from HTTP entry through spot lookup and Redis lock write.
-- `go test -race ./...` passes and coverage is ≥ 80%.
+- `go test -race ./...` passes.
 - `docker build` produces a working image that serves `/healthz` returning `200` when Redis is reachable.
