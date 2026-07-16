@@ -638,3 +638,119 @@ func TestNewMuxRoutingStillWorks(t *testing.T) {
 		t.Fatalf("healthz status=%d", rec.Code)
 	}
 }
+
+// ---------- List endpoints ----------
+
+func TestListQuotesEmpty(t *testing.T) {
+	s := helperServer(t)
+	h := helperMux(s)
+	rec := doReq(t, h, http.MethodGet, "/v1/quotes", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	m := parseJSON(t, rec)
+	quotes, _ := m["quotes"].([]any)
+	if len(quotes) != 0 {
+		t.Fatalf("expected empty quotes list, got %d", len(quotes))
+	}
+}
+
+func TestListQuotesAfterCreate(t *testing.T) {
+	s := helperServer(t)
+	h := helperMux(s)
+	rec := doReq(t, h, http.MethodPost, "/v1/quotes", quoteRequest{From: "USD", To: "BTC", Amount: "100", UserTier: "tier_1", Side: "buy"})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	created := parseJSON(t, rec)
+	id, _ := created["quote_id"].(string)
+
+	rec2 := doReq(t, h, http.MethodGet, "/v1/quotes", nil)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", rec2.Code, rec2.Body.String())
+	}
+	m := parseJSON(t, rec2)
+	quotes, _ := m["quotes"].([]any)
+	if len(quotes) != 1 {
+		t.Fatalf("expected 1 quote, got %d", len(quotes))
+	}
+	first, _ := quotes[0].(map[string]any)
+	if first["quote_id"] != id {
+		t.Fatalf("expected quote_id %s got %v", id, first["quote_id"])
+	}
+}
+
+func TestListQuotesMethodNotAllowed(t *testing.T) {
+	s := helperServer(t)
+	h := helperMux(s)
+	rec := doReq(t, h, http.MethodDelete, "/v1/quotes", nil)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status=%d", rec.Code)
+	}
+}
+
+func TestListFeeSchedules(t *testing.T) {
+	s := helperServer(t)
+	h := helperMux(s)
+	rec := doReq(t, h, http.MethodGet, "/v1/fee-schedules", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	m := parseJSON(t, rec)
+	fs, _ := m["fee_schedules"].([]any)
+	if len(fs) == 0 {
+		t.Fatal("expected seeded fee schedules")
+	}
+	first, _ := fs[0].(map[string]any)
+	for _, k := range []string{"id", "user_tier", "asset", "side", "spread_bps", "enabled"} {
+		if _, has := first[k]; !has {
+			t.Fatalf("fee_schedules[].%s missing: %v", k, first)
+		}
+	}
+}
+
+func TestListFeeSchedulesMethodNotAllowed(t *testing.T) {
+	s := helperServer(t)
+	h := helperMux(s)
+	rec := doReq(t, h, http.MethodPost, "/v1/fee-schedules", nil)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status=%d", rec.Code)
+	}
+}
+
+func TestListRateSources(t *testing.T) {
+	s := helperServer(t)
+	now := time.Now().UTC()
+	s.store.SetRateSources([]*RateSource{
+		{Name: "kraken", Priority: 0, Enabled: true, Weight: 2, CreatedAt: now, UpdatedAt: now},
+		{Name: "coinbase", Priority: 1, Enabled: true, Weight: 1, CreatedAt: now, UpdatedAt: now},
+	})
+	h := helperMux(s)
+	rec := doReq(t, h, http.MethodGet, "/v1/rate-sources", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	m := parseJSON(t, rec)
+	rs, _ := m["rate_sources"].([]any)
+	if len(rs) != 2 {
+		t.Fatalf("expected 2 rate sources, got %d", len(rs))
+	}
+	first, _ := rs[0].(map[string]any)
+	for _, k := range []string{"name", "priority", "enabled", "weight"} {
+		if _, has := first[k]; !has {
+			t.Fatalf("rate_sources[].%s missing: %v", k, first)
+		}
+	}
+	if first["name"] != "kraken" {
+		t.Fatalf("expected kraken first by priority, got %v", first["name"])
+	}
+}
+
+func TestListRateSourcesMethodNotAllowed(t *testing.T) {
+	s := helperServer(t)
+	h := helperMux(s)
+	rec := doReq(t, h, http.MethodPut, "/v1/rate-sources", nil)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status=%d", rec.Code)
+	}
+}

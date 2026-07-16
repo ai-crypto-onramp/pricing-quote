@@ -125,6 +125,8 @@ func (s *Server) register(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/rates/subscribe", s.ratesSubscribeHandler)
 	mux.HandleFunc("/internal/v1/quotes/", s.internalQuoteHandler)
 	mux.HandleFunc("/internal/v1/fee-schedules/reload", s.feeSchedulesReload)
+	mux.HandleFunc("/v1/fee-schedules", s.feeSchedulesHandler)
+	mux.HandleFunc("/v1/rate-sources", s.rateSourcesHandler)
 	mux.HandleFunc("/v1/audit-events", s.auditEventsHandler)
 }
 
@@ -231,8 +233,12 @@ func writeErrorApp(w http.ResponseWriter, r *http.Request, e *AppError) {
 	writeError(w, r, e.Status, e.Code, e.Message)
 }
 
-// quotesHandler dispatches POST /v1/quotes (single + bulk).
+// quotesHandler dispatches GET /v1/quotes (list) and POST /v1/quotes (single + bulk).
 func (s *Server) quotesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		s.listQuotes(w, r)
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		return
@@ -520,6 +526,70 @@ func (s *Server) feeSchedulesReload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"status": "reloaded"})
+}
+
+// feeSchedulesHandler handles GET /v1/fee-schedules.
+func (s *Server) feeSchedulesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
+	fs := s.store.FeeSchedules()
+	out := make([]map[string]any, 0, len(fs))
+	for _, f := range fs {
+		out = append(out, map[string]any{
+			"id":            f.ID,
+			"user_tier":     f.UserTier,
+			"asset":         f.Asset,
+			"size_band_min": f.SizeBandMin,
+			"size_band_max": f.SizeBandMax,
+			"side":          f.Side,
+			"spread_bps":    f.SpreadBPS,
+			"fee_type":      f.FeeType,
+			"fee_amount":    f.FeeAmount,
+			"fee_bps":       f.FeeBPS,
+			"enabled":       f.Enabled,
+			"updated_at":    f.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"fee_schedules": out})
+}
+
+// rateSourcesHandler handles GET /v1/rate-sources.
+func (s *Server) rateSourcesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
+	rs := s.store.RateSources()
+	out := make([]map[string]any, 0, len(rs))
+	for _, src := range rs {
+		out = append(out, map[string]any{
+			"name":         src.Name,
+			"priority":     src.Priority,
+			"enabled":      src.Enabled,
+			"endpoint_ref": src.EndpointRef,
+			"weight":       src.Weight,
+			"created_at":   src.CreatedAt.UTC().Format(time.RFC3339Nano),
+			"updated_at":   src.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"rate_sources": out})
+}
+
+// listQuotes handles GET /v1/quotes (list all quotes, newest first).
+func (s *Server) listQuotes(w http.ResponseWriter, r *http.Request) {
+	_, span := startSpan(r.Context(), "GET /v1/quotes")
+	defer span.End()
+	qs := s.store.ListQuotes()
+	out := make([]map[string]any, 0, len(qs))
+	for _, q := range qs {
+		out = append(out, q.toResponse())
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"quotes": out})
 }
 
 // auditEventsHandler handles GET /v1/audit-events.

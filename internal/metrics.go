@@ -149,6 +149,9 @@ func labeledPath(p string) string {
 	if len(p) >= len("/internal/v1/quotes/") && p[:len("/internal/v1/quotes/")] == "/internal/v1/quotes/" {
 		return "/internal/v1/quotes/:id/claim"
 	}
+	if p == "/v1/fee-schedules" || p == "/v1/rate-sources" {
+		return p
+	}
 	return p
 }
 

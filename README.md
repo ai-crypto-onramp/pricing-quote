@@ -56,6 +56,18 @@ Core responsibilities:
 
 ### Endpoints
 
+#### `GET /v1/quotes`
+
+List all issued quotes (newest first). Returns:
+
+```json
+{
+  "quotes": [
+    { "quote_id": "q_01HABC...", "from": "USD", "to": "BTC", "amount": "500.00", "status": "open", ... }
+  ]
+}
+```
+
 #### `POST /v1/quotes`
 
 Create a quote (single or bulk).
@@ -110,6 +122,14 @@ Client sends `{ "pairs": ["USD-BTC", "USD-ETH"] }`. Server streams:
 ```
 
 Internal claim endpoint (service-to-service, mTLS): `POST /internal/v1/quotes/:id/claim` — atomic claim by the Transaction Orchestrator at settlement; enforces slippage guard.
+
+#### `GET /v1/fee-schedules`
+
+List the in-effect fee schedules (spread bps + fee model per user tier / asset / size band / side). Returns `{ "fee_schedules": [ ... ] }`.
+
+#### `GET /v1/rate-sources`
+
+List the enabled upstream rate-source venues (ordered by priority). Returns `{ "rate_sources": [ ... ] }`.
 
 ### Data Model
 
