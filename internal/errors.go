@@ -19,7 +19,7 @@ func (e *AppError) Unwrap() error { return e }
 
 var (
 	errNotFound         = &AppError{Status: http.StatusNotFound, Code: "not_found", Message: "quote not found"}
-	errExpired          = &AppError{Status: http.StatusGone, Code: "expired", Message: "quote expired"}
+	errExpired          = &AppError{Status: http.StatusGone, Code: "EXPIRED", Message: "quote expired"}
 	errBadCurrency      = &AppError{Status: http.StatusBadRequest, Code: "invalid_currency", Message: "currency code must be 3-letter uppercase or a crypto symbol"}
 	errBadAmount        = &AppError{Status: http.StatusBadRequest, Code: "invalid_amount", Message: "amount must be > 0"}
 	errBadTier          = &AppError{Status: http.StatusBadRequest, Code: "invalid_tier", Message: "unsupported user_tier"}
@@ -27,7 +27,7 @@ var (
 	errSpotUnavailable  = &AppError{Status: http.StatusServiceUnavailable, Code: "spot_unavailable", Message: "spot rate unavailable"}
 )
 
-var supportedTiers = map[string]bool{"tier_1": true, "tier_2": true, "tier_3": true}
+var supportedTiers = map[string]bool{"TIER_1": true, "TIER_2": true, "TIER_3": true}
 
 // validateCurrency accepts 3-letter uppercase fiat codes or known crypto
 // symbols (length 3-5 uppercase).
@@ -51,7 +51,7 @@ func validateTier(t string) error {
 }
 
 func validateSide(s string) error {
-	if s != "buy" && s != "sell" {
+	if s != "BUY" && s != "SELL" {
 		return errBadSide
 	}
 	return nil

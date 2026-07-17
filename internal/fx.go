@@ -97,10 +97,10 @@ func (p *Pricer) CrossPairQuote(ctx context.Context, from, to string, amount flo
 		cross.SpreadBPS += hedgeBPS
 		spread := float64(cross.SpreadBPS) / 10000.0
 		switch side {
-		case "buy":
+		case "BUY":
 			cross.Rate = cross.Spot * (1 + spread)
 			cross.CryptoAmount = amount / cross.Rate
-		case "sell":
+		case "SELL":
 			cross.Rate = cross.Spot * (1 - spread)
 			cross.Total = amount*cross.Rate - cross.Fee
 		}

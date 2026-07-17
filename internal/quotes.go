@@ -1,16 +1,16 @@
 package pricing
 
 import (
-	"crypto/rand"
-	"encoding/base32"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // AuditEvent records a quote lifecycle transition.
 type AuditEvent struct {
 	Type        string    `json:"type"`
-	QuoteID     string    `json:"quote_id"`
+	QuoteID     uuid.UUID `json:"quote_id"`
 	UserTier    string    `json:"user_tier"`
 	SourceVenue string    `json:"source_venue"`
 	Reason      string    `json:"reason,omitempty"`
@@ -146,10 +146,8 @@ func (a *AuditLog) Dropped() int {
 	return a.dropped
 }
 
-// newQuoteID generates a ULID-like identifier: q_<base32 random chars>.
-func newQuoteID() string {
-	var b [10]byte
-	_, _ = rand.Read(b[:])
-	s := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:])
-	return "q_" + s
+// newQuoteID generates an app-side UUIDv7 identifier for a quote.
+func newQuoteID() uuid.UUID {
+	id, _ := uuid.NewV7()
+	return id
 }

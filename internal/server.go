@@ -2,13 +2,13 @@ package pricing
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Config holds runtime knobs (env-overridable, but defaults are hardcoded).
@@ -96,15 +96,21 @@ func NewServer(cfg Config) *Server {
 func seedFeeSchedules(store *Store) {
 	now := time.Now().UTC()
 	fs := []FeeSchedule{
-		{ID: 1, UserTier: "tier_1", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 1000, Side: "buy", SpreadBPS: 80, FeeType: "bps", FeeBPS: 50, Enabled: true, UpdatedAt: now},
-		{ID: 2, UserTier: "tier_1", Asset: "BTC", SizeBandMin: 1000, SizeBandMax: 10000, Side: "buy", SpreadBPS: 60, FeeType: "bps", FeeBPS: 30, Enabled: true, UpdatedAt: now},
-		{ID: 3, UserTier: "tier_1", Asset: "ETH", SizeBandMin: 0, SizeBandMax: 100, Side: "buy", SpreadBPS: 90, FeeType: "bps", FeeBPS: 50, Enabled: true, UpdatedAt: now},
-		{ID: 4, UserTier: "tier_2", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 1000, Side: "buy", SpreadBPS: 70, FeeType: "bps", FeeBPS: 40, Enabled: true, UpdatedAt: now},
-		{ID: 5, UserTier: "tier_2", Asset: "ETH", SizeBandMin: 0, SizeBandMax: 100, Side: "buy", SpreadBPS: 75, FeeType: "bps", FeeBPS: 40, Enabled: true, UpdatedAt: now},
-		{ID: 6, UserTier: "tier_2", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 1000, Side: "sell", SpreadBPS: 70, FeeType: "bps", FeeBPS: 40, Enabled: true, UpdatedAt: now},
-		{ID: 7, UserTier: "tier_1", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 1000, Side: "sell", SpreadBPS: 80, FeeType: "bps", FeeBPS: 50, Enabled: true, UpdatedAt: now},
+		{ID: newFeeScheduleID(), UserTier: "TIER_1", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 1000, Side: "BUY", SpreadBPS: 80, FeeType: "BPS", FeeBPS: 50, Enabled: true, UpdatedAt: now},
+		{ID: newFeeScheduleID(), UserTier: "TIER_1", Asset: "BTC", SizeBandMin: 1000, SizeBandMax: 10000, Side: "BUY", SpreadBPS: 60, FeeType: "BPS", FeeBPS: 30, Enabled: true, UpdatedAt: now},
+		{ID: newFeeScheduleID(), UserTier: "TIER_1", Asset: "ETH", SizeBandMin: 0, SizeBandMax: 100, Side: "BUY", SpreadBPS: 90, FeeType: "BPS", FeeBPS: 50, Enabled: true, UpdatedAt: now},
+		{ID: newFeeScheduleID(), UserTier: "TIER_2", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 1000, Side: "BUY", SpreadBPS: 70, FeeType: "BPS", FeeBPS: 40, Enabled: true, UpdatedAt: now},
+		{ID: newFeeScheduleID(), UserTier: "TIER_2", Asset: "ETH", SizeBandMin: 0, SizeBandMax: 100, Side: "BUY", SpreadBPS: 75, FeeType: "BPS", FeeBPS: 40, Enabled: true, UpdatedAt: now},
+		{ID: newFeeScheduleID(), UserTier: "TIER_2", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 1000, Side: "SELL", SpreadBPS: 70, FeeType: "BPS", FeeBPS: 40, Enabled: true, UpdatedAt: now},
+		{ID: newFeeScheduleID(), UserTier: "TIER_1", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 1000, Side: "SELL", SpreadBPS: 80, FeeType: "BPS", FeeBPS: 50, Enabled: true, UpdatedAt: now},
 	}
 	store.SetFeeSchedules(fs)
+}
+
+// newFeeScheduleID generates an app-side UUIDv7 identifier for a fee schedule.
+func newFeeScheduleID() uuid.UUID {
+	id, _ := uuid.NewV7()
+	return id
 }
 
 // newMux builds the HTTP routing mux for the service.
@@ -211,9 +217,8 @@ func requestIDMiddleware(h http.Handler) http.Handler {
 }
 
 func newRequestID() string {
-	var b [8]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
+	id, _ := uuid.NewV7()
+	return id.String()
 }
 
 // writeError writes a structured error envelope.
@@ -371,7 +376,11 @@ func (s *Server) quoteByIDHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusNotFound, "not_found", "quote id required")
 		return
 	}
-	id := parts[0]
+	id, err := uuid.Parse(parts[0])
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "not_found", "invalid quote id")
+		return
+	}
 	if len(parts) == 2 && parts[1] == "refresh" {
 		if r.Method != http.MethodPost {
 			writeError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
@@ -387,10 +396,10 @@ func (s *Server) quoteByIDHandler(w http.ResponseWriter, r *http.Request) {
 	s.getQuote(w, r, id)
 }
 
-func (s *Server) getQuote(w http.ResponseWriter, r *http.Request, id string) {
+func (s *Server) getQuote(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
 	_, span := startSpan(r.Context(), "GET /v1/quotes/:id")
 	defer span.End()
-	span.SetAttribute("quote_id", id)
+	span.SetAttribute("quote_id", id.String())
 	q := s.store.GetQuote(id)
 	if q == nil {
 		writeErrorApp(w, r, errNotFound)
@@ -406,10 +415,10 @@ func (s *Server) getQuote(w http.ResponseWriter, r *http.Request, id string) {
 	json.NewEncoder(w).Encode(q.toResponse())
 }
 
-func (s *Server) refreshQuote(w http.ResponseWriter, r *http.Request, id string) {
+func (s *Server) refreshQuote(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
 	_, span := startSpan(r.Context(), "POST /v1/quotes/:id/refresh")
 	defer span.End()
-	span.SetAttribute("quote_id", id)
+	span.SetAttribute("quote_id", id.String())
 	old := s.store.GetQuote(id)
 	if old == nil {
 		writeErrorApp(w, r, errNotFound)
@@ -458,7 +467,7 @@ func (s *Server) refreshQuote(w http.ResponseWriter, r *http.Request, id string)
 	})
 	s.locks.SetNX(lockKey(newID), string(lockPayload), s.cfg.RateLockTTL)
 	s.audit.Append(AuditEvent{Type: "quote.issued", QuoteID: newID, UserTier: old.UserTier, SourceVenue: res.SourceVenue})
-	span.SetAttribute("new_quote_id", newID)
+	span.SetAttribute("new_quote_id", newID.String())
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(nq.toResponse())
@@ -472,7 +481,11 @@ func (s *Server) internalQuoteHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusNotFound, "not_found", "quote id required")
 		return
 	}
-	id := parts[0]
+	id, err := uuid.Parse(parts[0])
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "not_found", "invalid quote id")
+		return
+	}
 	if len(parts) != 2 || parts[1] != "claim" {
 		writeError(w, r, http.StatusNotFound, "not_found", "unknown route")
 		return
@@ -492,7 +505,7 @@ func (s *Server) internalQuoteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	_, span := startSpan(r.Context(), "POST /internal/v1/quotes/:id/claim")
 	defer span.End()
-	span.SetAttribute("quote_id", id)
+	span.SetAttribute("quote_id", id.String())
 	res := s.claim.Claim(id, req.ClaimedBy)
 	if res.Reason != "" {
 		globalMetrics.claimTotal.WithLabelValues(res.Reason).Inc()
@@ -500,8 +513,8 @@ func (s *Server) internalQuoteHandler(w http.ResponseWriter, r *http.Request) {
 		case "missing":
 			writeError(w, r, http.StatusNotFound, "not_found", "quote not found")
 			return
-		case "expired":
-			writeError(w, r, http.StatusGone, "expired", "quote expired")
+		case "EXPIRED":
+			writeError(w, r, http.StatusGone, "EXPIRED", "quote expired")
 			return
 		default:
 			writeError(w, r, http.StatusConflict, res.Reason, "claim rejected: "+res.Reason)

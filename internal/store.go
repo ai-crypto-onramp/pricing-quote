@@ -4,21 +4,23 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // QuoteStatus enumerates quote lifecycle states.
 type QuoteStatus string
 
 const (
-	StatusOpen     QuoteStatus = "open"
-	StatusClaimed  QuoteStatus = "claimed"
-	StatusExpired  QuoteStatus = "expired"
-	StatusCanceled QuoteStatus = "canceled"
+	StatusOpen     QuoteStatus = "OPEN"
+	StatusClaimed  QuoteStatus = "CLAIMED"
+	StatusExpired  QuoteStatus = "EXPIRED"
+	StatusCanceled QuoteStatus = "CANCELED"
 )
 
 // Quote is the durable record of an issued quote.
 type Quote struct {
-	QuoteID      string      `json:"quote_id"`
+	QuoteID      uuid.UUID   `json:"quote_id"`
 	From         string      `json:"from"`
 	To           string      `json:"to"`
 	Amount       string      `json:"amount"`
@@ -46,22 +48,23 @@ type Quote struct {
 
 // FeeSchedule defines spread/fee per (tier, asset, side, size band).
 type FeeSchedule struct {
-	ID          int       `json:"id"`
-	UserTier    string    `json:"user_tier"`
-	Asset       string    `json:"asset"`
-	SizeBandMin float64   `json:"size_band_min"`
-	SizeBandMax float64   `json:"size_band_max"`
-	Side        string    `json:"side"`
-	SpreadBPS   int       `json:"spread_bps"`
-	FeeType     string    `json:"fee_type"`
-	FeeAmount   float64   `json:"fee_amount"`
-	FeeBPS      int       `json:"fee_bps"`
-	Enabled     bool      `json:"enabled"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          uuid.UUID  `json:"id"`
+	UserTier    string     `json:"user_tier"`
+	Asset       string     `json:"asset"`
+	SizeBandMin float64    `json:"size_band_min"`
+	SizeBandMax float64    `json:"size_band_max"`
+	Side        string     `json:"side"`
+	SpreadBPS   int        `json:"spread_bps"`
+	FeeType     string     `json:"fee_type"`
+	FeeAmount   float64    `json:"fee_amount"`
+	FeeBPS      int        `json:"fee_bps"`
+	Enabled     bool       `json:"enabled"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // RateSource is an upstream venue registry entry.
 type RateSource struct {
+	ID          uuid.UUID `json:"id"`
 	Name        string    `json:"name"`
 	Priority    int       `json:"priority"`
 	Enabled     bool      `json:"enabled"`
@@ -74,7 +77,7 @@ type RateSource struct {
 // Store is the in-memory OLTP store for quotes, fee_schedules, rate_sources.
 type Store struct {
 	mu        sync.RWMutex
-	quotes    map[string]*Quote
+	quotes    map[uuid.UUID]*Quote
 	schedules []FeeSchedule
 	sources   map[string]*RateSource
 }
@@ -82,7 +85,7 @@ type Store struct {
 // NewStore returns an empty in-memory Store.
 func NewStore() *Store {
 	return &Store{
-		quotes:  make(map[string]*Quote),
+		quotes:  make(map[uuid.UUID]*Quote),
 		sources: make(map[string]*RateSource),
 	}
 }
@@ -96,7 +99,7 @@ func (s *Store) SaveQuote(q *Quote) {
 }
 
 // GetQuote loads a quote by id. Returns nil if not found.
-func (s *Store) GetQuote(id string) *Quote {
+func (s *Store) GetQuote(id uuid.UUID) *Quote {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	q, ok := s.quotes[id]
@@ -109,7 +112,7 @@ func (s *Store) GetQuote(id string) *Quote {
 
 // UpdateQuote applies mutator fn to the quote identified by id under the lock.
 // Returns the updated quote and false if the quote was not found.
-func (s *Store) UpdateQuote(id string, fn func(*Quote)) (*Quote, bool) {
+func (s *Store) UpdateQuote(id uuid.UUID, fn func(*Quote)) (*Quote, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	q, ok := s.quotes[id]

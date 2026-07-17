@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // ---------- Stage 1: config ----------
@@ -138,16 +140,16 @@ func TestFeeIndexLookup(t *testing.T) {
 	now := time.Now().UTC()
 	idx := newFeeIndex()
 	idx.Rebuild([]FeeSchedule{
-		{UserTier: "tier_2", Asset: "BTC", Side: "buy", SizeBandMin: 0, SizeBandMax: 1000, SpreadBPS: 70, Enabled: true, UpdatedAt: now},
-		{UserTier: "tier_2", Asset: "BTC", Side: "buy", SizeBandMin: 1000, SizeBandMax: 10000, SpreadBPS: 50, Enabled: true, UpdatedAt: now},
+		{UserTier: "TIER_2", Asset: "BTC", Side: "BUY", SizeBandMin: 0, SizeBandMax: 1000, SpreadBPS: 70, Enabled: true, UpdatedAt: now},
+		{UserTier: "TIER_2", Asset: "BTC", Side: "BUY", SizeBandMin: 1000, SizeBandMax: 10000, SpreadBPS: 50, Enabled: true, UpdatedAt: now},
 	})
-	if s := idx.Lookup("tier_2", "BTC", "buy", 500); s == nil || s.SpreadBPS != 70 {
+	if s := idx.Lookup("TIER_2", "BTC", "BUY", 500); s == nil || s.SpreadBPS != 70 {
 		t.Fatalf("expected 70, got %v", s)
 	}
-	if s := idx.Lookup("tier_2", "BTC", "buy", 5000); s == nil || s.SpreadBPS != 50 {
+	if s := idx.Lookup("TIER_2", "BTC", "BUY", 5000); s == nil || s.SpreadBPS != 50 {
 		t.Fatalf("expected 50, got %v", s)
 	}
-	if s := idx.Lookup("tier_2", "ETH", "buy", 500); s != nil {
+	if s := idx.Lookup("TIER_2", "ETH", "BUY", 500); s != nil {
 		t.Fatalf("expected nil, got %v", s)
 	}
 }
@@ -157,10 +159,10 @@ func TestPricerReloadIndex(t *testing.T) {
 	spot := NewSpotService(5 * time.Second)
 	p := NewPricer(store, spot, 100)
 	store.SetFeeSchedules([]FeeSchedule{
-		{UserTier: "tier_3", Asset: "BTC", Side: "buy", SizeBandMin: 0, SizeBandMax: 10000, SpreadBPS: 42, Enabled: true},
+		{UserTier: "TIER_3", Asset: "BTC", Side: "BUY", SizeBandMin: 0, SizeBandMax: 10000, SpreadBPS: 42, Enabled: true},
 	})
 	p.ReloadIndex()
-	res, err := p.Compute("USD", "BTC", 500, "tier_3", "buy")
+	res, err := p.Compute("USD", "BTC", 500, "TIER_3", "BUY")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +243,7 @@ func TestCrossPairQuoteEURBTC(t *testing.T) {
 	fx := &fakeFXClient{rate: 1.10, hedgeBPS: 5}
 	p.SetFXClient(fx)
 	ctx := context.Background()
-	res, err := p.CrossPairQuote(ctx, "EUR", "BTC", 500, "tier_1", "buy")
+	res, err := p.CrossPairQuote(ctx, "EUR", "BTC", 500, "TIER_1", "BUY")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +259,7 @@ func TestCrossPairQuoteUSDFallsBack(t *testing.T) {
 	store := NewStore()
 	spot := NewSpotService(5 * time.Second)
 	p := NewPricer(store, spot, 100)
-	res, err := p.CrossPairQuote(context.Background(), "USD", "BTC", 500, "tier_3", "buy")
+	res, err := p.CrossPairQuote(context.Background(), "USD", "BTC", 500, "TIER_3", "BUY")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +298,7 @@ func TestAuditLogAsyncDispatch(t *testing.T) {
 	sink := &countingSink{}
 	a := NewAuditLogWithSink(8, sink)
 	for i := 0; i < 5; i++ {
-		a.Append(AuditEvent{Type: "quote.issued", QuoteID: "q_1"})
+		a.Append(AuditEvent{Type: "quote.issued", QuoteID: uuid.New()})
 	}
 	// Allow dispatch goroutine to drain.
 	time.Sleep(50 * time.Millisecond)
@@ -419,7 +421,7 @@ func TestMetricsMiddlewareLabels(t *testing.T) {
 func TestSweeperEmitsExpiredAudit(t *testing.T) {
 	s := helperServer(t)
 	s.cfg.RateLockTTL = 30 * time.Millisecond
-	_, _ = s.createQuote(context.Background(), quoteRequest{From: "USD", To: "BTC", Amount: "100", UserTier: "tier_1", Side: "buy"})
+	_, _ = s.createQuote(context.Background(), quoteRequest{From: "USD", To: "BTC", Amount: "100", UserTier: "TIER_1", Side: "BUY"})
 	stop := s.StartSweeper(20 * time.Millisecond)
 	defer stop()
 	time.Sleep(100 * time.Millisecond)
@@ -440,7 +442,7 @@ func TestBulkQuoteResponseShape(t *testing.T) {
 	s := helperServer(t)
 	h := helperMux(s)
 	rec := doReq(t, h, "POST", "/v1/quotes", bulkRequest{Items: []quoteRequest{
-		{From: "USD", To: "BTC", Amount: "100", UserTier: "tier_1", Side: "buy"},
+		{From: "USD", To: "BTC", Amount: "100", UserTier: "TIER_1", Side: "BUY"},
 	}})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())

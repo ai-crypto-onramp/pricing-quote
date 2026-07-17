@@ -43,8 +43,8 @@ type ComputeResult struct {
 }
 
 // Compute returns the effective rate, spread, fee, total (fiat), and crypto
-// amount for a quote request. Side is "buy" (user buys crypto, pays fiat) or
-// "sell" (user sells crypto, receives fiat). For buys, amount is fiat; for
+// amount for a quote request. Side is "BUY" (user buys crypto, pays fiat) or
+// "SELL" (user sells crypto, receives fiat). For buys, amount is fiat; for
 // sells, amount is crypto.
 func (p *Pricer) Compute(from, to string, amount float64, userTier, side string) (ComputeResult, error) {
 	r, err := p.spot.Get(from, to)
@@ -74,12 +74,12 @@ func (p *Pricer) Compute(from, to string, amount float64, userTier, side string)
 
 	var rate, fee, total, cryptoAmount float64
 	switch side {
-	case "buy":
+	case "BUY":
 		rate = spot * (1 + spread)
 		fee = computeFee(sched, amount)
 		total = amount + fee
 		cryptoAmount = amount / rate
-	case "sell":
+	case "SELL":
 		rate = spot * (1 - spread)
 		cryptoAmount = amount
 		fee = computeFee(sched, total)
@@ -133,9 +133,9 @@ func computeFee(s *FeeSchedule, base float64) float64 {
 		return 0
 	}
 	switch s.FeeType {
-	case "flat":
+	case "FLAT":
 		return s.FeeAmount
-	case "bps":
+	case "BPS":
 		return base * float64(s.FeeBPS) / 10000.0
 	default:
 		return 0

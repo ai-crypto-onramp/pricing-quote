@@ -3,6 +3,8 @@ package pricing
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // ClaimRequest is the body of POST /internal/v1/quotes/:id/claim.
@@ -39,13 +41,13 @@ func NewClaimService(store *Store, locks LockBackend, spot *SpotService, audit *
 
 // Claim attempts to atomically claim the quote identified by id on behalf of
 // claimedBy. Returns a ClaimResult whose Reason is empty on success.
-func (c *ClaimService) Claim(id, claimedBy string) ClaimResult {
+func (c *ClaimService) Claim(id uuid.UUID, claimedBy string) ClaimResult {
 	q := c.store.GetQuote(id)
 	if q == nil {
 		return ClaimResult{Reason: "missing"}
 	}
 	if q.Status == StatusCanceled || q.Status == StatusExpired {
-		return ClaimResult{Reason: "expired", Quote: q}
+		return ClaimResult{Reason: "EXPIRED", Quote: q}
 	}
 	if q.Status == StatusClaimed {
 		return ClaimResult{Reason: "already_claimed", Quote: q}
@@ -54,7 +56,7 @@ func (c *ClaimService) Claim(id, claimedBy string) ClaimResult {
 		c.store.UpdateQuote(id, func(row *Quote) { row.Status = StatusExpired })
 		q.Status = StatusExpired
 		c.audit.Append(AuditEvent{Type: "quote.expired", QuoteID: id, UserTier: q.UserTier, SourceVenue: q.SourceVenue})
-		return ClaimResult{Reason: "expired", Quote: q}
+		return ClaimResult{Reason: "EXPIRED", Quote: q}
 	}
 	lockVal, ok := c.locks.Claim(lockKey(id))
 	if !ok {
@@ -104,7 +106,7 @@ func (c *ClaimService) Claim(id, claimedBy string) ClaimResult {
 }
 
 // Refresh cancels the old quote and produces a freshly computed one.
-func (c *ClaimService) Refresh(id string, compute func(*Quote) (*Quote, error)) (*Quote, error) {
+func (c *ClaimService) Refresh(id uuid.UUID, compute func(*Quote) (*Quote, error)) (*Quote, error) {
 	old := c.store.GetQuote(id)
 	if old == nil {
 		return nil, errNotFound
@@ -121,4 +123,4 @@ func (c *ClaimService) Refresh(id string, compute func(*Quote) (*Quote, error)) 
 	return nq, nil
 }
 
-func lockKey(id string) string { return "lock:quote:" + id }
+func lockKey(id uuid.UUID) string { return "lock:quote:" + id.String() }

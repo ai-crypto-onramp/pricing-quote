@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // ---------- coverage helpers ----------
@@ -69,22 +71,23 @@ func TestStoreRateSources(t *testing.T) {
 func TestClaimServiceRefresh(t *testing.T) {
 	s := helperServer(t)
 	h := helperMux(s)
-	rec := doReq(t, h, "POST", "/v1/quotes", quoteRequest{From: "USD", To: "BTC", Amount: "100", UserTier: "tier_1", Side: "buy"})
-	id := parseJSON(t, rec)["quote_id"].(string)
+	rec := doReq(t, h, "POST", "/v1/quotes", quoteRequest{From: "USD", To: "BTC", Amount: "100", UserTier: "TIER_1", Side: "BUY"})
+	id, _ := uuid.Parse(parseJSON(t, rec)["quote_id"].(string))
+	refreshedID := uuid.New()
 	nq, err := s.claim.Refresh(id, func(old *Quote) (*Quote, error) {
-		return &Quote{QuoteID: "q_refreshed", From: old.From, To: old.To, Status: StatusOpen}, nil
+		return &Quote{QuoteID: refreshedID, From: old.From, To: old.To, Status: StatusOpen}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if nq.QuoteID != "q_refreshed" {
+	if nq.QuoteID != refreshedID {
 		t.Fatalf("expected refreshed id, got %s", nq.QuoteID)
 	}
 }
 
 func TestClaimServiceRefreshMissing(t *testing.T) {
 	s := helperServer(t)
-	_, err := s.claim.Refresh("q_unknown", func(old *Quote) (*Quote, error) {
+	_, err := s.claim.Refresh(uuid.New(), func(old *Quote) (*Quote, error) {
 		return nil, nil
 	})
 	if err != errNotFound {
@@ -233,9 +236,9 @@ func TestAuditLogDropped(t *testing.T) {
 func TestQuoteToResponseClaimedFields(t *testing.T) {
 	now := time.Now().UTC()
 	q := &Quote{
-		QuoteID: "q_1", From: "USD", To: "BTC", Amount: "100",
+		QuoteID: uuid.New(), From: "USD", To: "BTC", Amount: "100",
 		Rate: "1", SpreadBPS: 50, Fee: "1", FeeCurrency: "USD",
-		Total: "101", CryptoAmount: "0.01", UserTier: "tier_1", Side: "buy",
+		Total: "101", CryptoAmount: "0.01", UserTier: "TIER_1", Side: "BUY",
 		Status: StatusClaimed, SourceVenue: "kraken",
 		CreatedAt: now, ExpiresAt: now.Add(30 * time.Second),
 		ClaimedAt: &now, ClaimedBy: "orch",
