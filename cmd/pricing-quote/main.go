@@ -23,6 +23,15 @@ func main() {
 	log := pricing.NewLogger(cfg.LogLevel)
 	log.Info("starting pricing-quote", pricing.FStr("config", cfg.String()))
 
+	if os.Getenv("DEV_MODE") != "1" {
+		if os.Getenv("PRICE_FEED_URL") == "" && os.Getenv("ORACLE_URL") == "" && os.Getenv("RATE_FEED_URL") == "" {
+			log.Error("PRICE_FEED_URL (or ORACLE_URL) required in production mode; spot rates are otherwise seeded stubs — set DEV_MODE=1 for local dev", pricing.FStr("hint", "DEV_MODE=1 for local dev"))
+			os.Exit(1)
+		}
+	} else {
+		log.Info("DEV_MODE=1: using seeded in-memory spot rates — NOT FOR PRODUCTION")
+	}
+
 	if dsn := dbURL(); dsn != "" {
 		if err := applyMigrations(dsn); err != nil {
 			log.Error("startup migrations failed", pricing.FErr(err))
