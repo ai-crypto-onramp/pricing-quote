@@ -10,6 +10,7 @@ import (
 
 	pricing "github.com/ai-crypto-onramp/pricing-quote/internal"
 	"github.com/ai-crypto-onramp/pricing-quote/internal/migrations"
+	"github.com/ai-crypto-onramp/pricing-quote/internal/otel"
 	_ "github.com/lib/pq"
 )
 
@@ -19,6 +20,13 @@ func main() {
 	if *healthcheck {
 		os.Exit(pricing.RunHealthcheck())
 	}
+	shutdown, err := otel.Init("pricing-quote")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "otel init:", err)
+		os.Exit(1)
+	}
+	defer func() { _ = shutdown(context.Background()) }()
+
 	cfg := pricing.LoadConfig()
 	log := pricing.NewLogger(cfg.LogLevel)
 	log.Info("starting pricing-quote", pricing.FStr("config", cfg.String()))

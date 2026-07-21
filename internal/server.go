@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // Config holds runtime knobs (env-overridable, but defaults are hardcoded).
@@ -161,6 +162,7 @@ func RunWithConfigCtx(ctx context.Context, cfg Config, log *logger) error {
 	srv.register(mux)
 	h := requestIDMiddleware(mux)
 	h = metricsMiddleware(h)
+	h = otelhttp.NewHandler(h, "pricing-quote")
 	stopSweep := srv.StartSweeper(60 * time.Second)
 	defer stopSweep()
 	stopRefresh := srv.startFeeScheduleRefresh(60 * time.Second)
