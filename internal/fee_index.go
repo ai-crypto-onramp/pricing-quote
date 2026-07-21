@@ -2,6 +2,8 @@ package pricing
 
 import (
 	"sync"
+
+	"github.com/shopspring/decimal"
 )
 
 // feeIndexKey is the lookup key for the in-memory fee schedule index.
@@ -39,16 +41,16 @@ func (f *feeIndex) Rebuild(schedules []FeeSchedule) {
 
 // Lookup returns the first enabled schedule matching the (tier, asset, side)
 // and the amount's size band, or nil if none matches.
-func (f *feeIndex) Lookup(tier, asset, side string, amount float64) *FeeSchedule {
+func (f *feeIndex) Lookup(tier, asset, side string, amount decimal.Decimal) *FeeSchedule {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	cands := f.data[feeIndexKey{tier: tier, asset: asset, side: side}]
 	for i := range cands {
 		s := cands[i]
-		if amount < s.SizeBandMin {
+		if amount.LessThan(s.SizeBandMin) {
 			continue
 		}
-		if s.SizeBandMax > 0 && amount > s.SizeBandMax {
+		if s.SizeBandMax.GreaterThan(decimal.Zero) && amount.GreaterThan(s.SizeBandMax) {
 			continue
 		}
 		return &cands[i]

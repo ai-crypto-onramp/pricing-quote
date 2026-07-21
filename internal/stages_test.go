@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // ---------- Stage 1: config ----------
@@ -85,10 +86,10 @@ func TestInProcFeedFanout(t *testing.T) {
 		_ = feed.Subscribe(ctx, func(m FeedMessage) { got <- m })
 	}()
 	time.Sleep(20 * time.Millisecond) // let subscriber register
-	feed.Publish(FeedMessage{Pair: "USD-BTC", Bid: 100, Ask: 101, Mid: 100.5, SourceVenue: "kraken"})
+	feed.Publish(FeedMessage{Pair: "USD-BTC", Bid: decimal.NewFromInt(100), Ask: decimal.NewFromInt(101), Mid: decimal.NewFromFloat(100.5), SourceVenue: "kraken"})
 	select {
 	case m := <-got:
-		if m.Pair != "USD-BTC" || m.Mid != 100.5 {
+		if m.Pair != "USD-BTC" || !m.Mid.Equal(decimal.NewFromFloat(100.5)) {
 			t.Fatalf("unexpected msg %+v", m)
 		}
 	case <-time.After(time.Second):
@@ -102,7 +103,7 @@ func TestSpotServicePollHook(t *testing.T) {
 	// Install a poll hook that returns a fresh rate.
 	svc.SetPollHook(func(from, to string) (Rate, bool) {
 		if from == "USD" && to == "BTC" {
-			return Rate{From: "USD", To: "BTC", Bid: 66000, Ask: 66100, Mid: 66050, TS: time.Now(), SourceVenue: "coinbase"}, true
+			return Rate{From: "USD", To: "BTC", Bid: decimal.NewFromInt(66000), Ask: decimal.NewFromInt(66100), Mid: decimal.NewFromInt(66050), TS: time.Now(), SourceVenue: "coinbase"}, true
 		}
 		return Rate{}, false
 	})
@@ -115,8 +116,8 @@ func TestSpotServicePollHook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Mid != 66050 {
-		t.Fatalf("expected poll hook result 66050, got %f", r.Mid)
+	if !r.Mid.Equal(decimal.NewFromInt(66050)) {
+		t.Fatalf("expected poll hook result 66050, got %s", r.Mid.String())
 	}
 }
 
@@ -140,16 +141,16 @@ func TestFeeIndexLookup(t *testing.T) {
 	now := time.Now().UTC()
 	idx := newFeeIndex()
 	idx.Rebuild([]FeeSchedule{
-		{UserTier: "TIER_2", Asset: "BTC", Side: "BUY", SizeBandMin: 0, SizeBandMax: 1000, SpreadBPS: 70, Enabled: true, UpdatedAt: now},
-		{UserTier: "TIER_2", Asset: "BTC", Side: "BUY", SizeBandMin: 1000, SizeBandMax: 10000, SpreadBPS: 50, Enabled: true, UpdatedAt: now},
+		{UserTier: "TIER_2", Asset: "BTC", Side: "BUY", SizeBandMin: decimal.Zero, SizeBandMax: decimal.NewFromInt(1000), SpreadBPS: 70, Enabled: true, UpdatedAt: now},
+		{UserTier: "TIER_2", Asset: "BTC", Side: "BUY", SizeBandMin: decimal.NewFromInt(1000), SizeBandMax: decimal.NewFromInt(10000), SpreadBPS: 50, Enabled: true, UpdatedAt: now},
 	})
-	if s := idx.Lookup("TIER_2", "BTC", "BUY", 500); s == nil || s.SpreadBPS != 70 {
+	if s := idx.Lookup("TIER_2", "BTC", "BUY", decimal.NewFromInt(500)); s == nil || s.SpreadBPS != 70 {
 		t.Fatalf("expected 70, got %v", s)
 	}
-	if s := idx.Lookup("TIER_2", "BTC", "BUY", 5000); s == nil || s.SpreadBPS != 50 {
+	if s := idx.Lookup("TIER_2", "BTC", "BUY", decimal.NewFromInt(5000)); s == nil || s.SpreadBPS != 50 {
 		t.Fatalf("expected 50, got %v", s)
 	}
-	if s := idx.Lookup("TIER_2", "ETH", "BUY", 500); s != nil {
+	if s := idx.Lookup("TIER_2", "ETH", "BUY", decimal.NewFromInt(500)); s != nil {
 		t.Fatalf("expected nil, got %v", s)
 	}
 }
@@ -159,10 +160,10 @@ func TestPricerReloadIndex(t *testing.T) {
 	spot := NewSpotService(5 * time.Second)
 	p := NewPricer(store, spot, 100)
 	store.SetFeeSchedules([]FeeSchedule{
-		{UserTier: "TIER_3", Asset: "BTC", Side: "BUY", SizeBandMin: 0, SizeBandMax: 10000, SpreadBPS: 42, Enabled: true},
+		{UserTier: "TIER_3", Asset: "BTC", Side: "BUY", SizeBandMin: decimal.Zero, SizeBandMax: decimal.NewFromInt(10000), SpreadBPS: 42, Enabled: true},
 	})
 	p.ReloadIndex()
-	res, err := p.Compute("USD", "BTC", 500, "TIER_3", "BUY")
+	res, err := p.Compute("USD", "BTC", decimal.NewFromInt(500), "TIER_3", "BUY")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,9 +176,9 @@ func TestPricerReloadIndex(t *testing.T) {
 
 func TestNormalizePair(t *testing.T) {
 	cases := map[string]string{
-		"usd-btc":  "USD-BTC",
-		"USDBTC":   "USD-BTC",
-		"USD-BTC": "USD-BTC",
+		"usd-btc":    "USD-BTC",
+		"USDBTC":     "USD-BTC",
+		"USD-BTC":    "USD-BTC",
 		"  eur-eth ": "EUR-ETH",
 	}
 	for in, want := range cases {
@@ -215,7 +216,7 @@ func TestWSHubFanout(t *testing.T) {
 		}
 		hc <- r{nil}
 	}()
-	hub.fanout("USD-BTC", Rate{From: "USD", To: "BTC", Mid: 65000, TS: time.Now(), SourceVenue: "kraken"})
+	hub.fanout("USD-BTC", Rate{From: "USD", To: "BTC", Mid: decimal.NewFromInt(65000), TS: time.Now(), SourceVenue: "kraken"})
 	res := <-hc
 	if res.err != nil {
 		t.Fatalf("read: %v", res.err)
@@ -226,9 +227,9 @@ func TestWSHubFanout(t *testing.T) {
 // ---------- Stage 7: FX cross-pair ----------
 
 type fakeFXClient struct {
-	rate       float64
-	hedgeBPS    int
-	called     bool
+	rate     float64
+	hedgeBPS int
+	called   bool
 }
 
 func (f *fakeFXClient) FetchFX(ctx context.Context, fiat string) (float64, int, error) {
@@ -243,7 +244,7 @@ func TestCrossPairQuoteEURBTC(t *testing.T) {
 	fx := &fakeFXClient{rate: 1.10, hedgeBPS: 5}
 	p.SetFXClient(fx)
 	ctx := context.Background()
-	res, err := p.CrossPairQuote(ctx, "EUR", "BTC", 500, "TIER_1", "BUY")
+	res, err := p.CrossPairQuote(ctx, "EUR", "BTC", decimal.NewFromInt(500), "TIER_1", "BUY")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +260,7 @@ func TestCrossPairQuoteUSDFallsBack(t *testing.T) {
 	store := NewStore()
 	spot := NewSpotService(5 * time.Second)
 	p := NewPricer(store, spot, 100)
-	res, err := p.CrossPairQuote(context.Background(), "USD", "BTC", 500, "TIER_3", "BUY")
+	res, err := p.CrossPairQuote(context.Background(), "USD", "BTC", decimal.NewFromInt(500), "TIER_3", "BUY")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,15 +394,15 @@ func TestFeedConsumerUpdatesSpot(t *testing.T) {
 	stop := s.startFeedConsumer(ctx, feed)
 	defer stop()
 	time.Sleep(20 * time.Millisecond)
-	feed.Publish(FeedMessage{Pair: "USD-ETH", Bid: 3000, Ask: 3010, Mid: 3005, SourceVenue: "coinbase", TS: time.Now()})
+	feed.Publish(FeedMessage{Pair: "USD-ETH", Bid: decimal.NewFromInt(3000), Ask: decimal.NewFromInt(3010), Mid: decimal.NewFromInt(3005), SourceVenue: "coinbase", TS: time.Now()})
 	time.Sleep(50 * time.Millisecond)
 	r, err := s.spot.Get("USD", "ETH")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Either seeded value or polled; both should be > 0.
-	if r.Mid <= 0 {
-		t.Fatalf("expected positive ETH mid, got %f", r.Mid)
+	if r.Mid.LessThanOrEqual(decimal.Zero) {
+		t.Fatalf("expected positive ETH mid, got %s", r.Mid.String())
 	}
 }
 

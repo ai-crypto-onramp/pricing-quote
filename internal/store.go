@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // QuoteStatus enumerates quote lifecycle states.
@@ -41,25 +42,25 @@ type Quote struct {
 
 	// LockedRate is the effective rate captured at quote time, used for the
 	// slippage comparison at claim. Not serialized.
-	LockedRate float64 `json:"-"`
+	LockedRate decimal.Decimal `json:"-"`
 	// SpotPrice is the fiat-per-crypto spot captured at quote time.
-	SpotPrice float64 `json:"-"`
+	SpotPrice decimal.Decimal `json:"-"`
 }
 
 // FeeSchedule defines spread/fee per (tier, asset, side, size band).
 type FeeSchedule struct {
-	ID          uuid.UUID  `json:"id"`
-	UserTier    string     `json:"user_tier"`
-	Asset       string     `json:"asset"`
-	SizeBandMin float64    `json:"size_band_min"`
-	SizeBandMax float64    `json:"size_band_max"`
-	Side        string     `json:"side"`
-	SpreadBPS   int        `json:"spread_bps"`
-	FeeType     string     `json:"fee_type"`
-	FeeAmount   float64    `json:"fee_amount"`
-	FeeBPS      int        `json:"fee_bps"`
-	Enabled     bool       `json:"enabled"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID          uuid.UUID       `json:"id"`
+	UserTier    string          `json:"user_tier"`
+	Asset       string          `json:"asset"`
+	SizeBandMin decimal.Decimal `json:"size_band_min"`
+	SizeBandMax decimal.Decimal `json:"size_band_max"`
+	Side        string          `json:"side"`
+	SpreadBPS   int             `json:"spread_bps"`
+	FeeType     string          `json:"fee_type"`
+	FeeAmount   decimal.Decimal `json:"fee_amount"`
+	FeeBPS      int             `json:"fee_bps"`
+	Enabled     bool            `json:"enabled"`
+	UpdatedAt   time.Time       `json:"updated_at"`
 }
 
 // RateSource is an upstream venue registry entry.

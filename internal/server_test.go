@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // helperServer returns a Server-backed mux with requestID middleware applied.
@@ -335,7 +336,7 @@ func TestClaimSlippageExceeded(t *testing.T) {
 	}
 	id := parseJSON(t, rec)["quote_id"].(string)
 	// Move the spot significantly: update the BTC mid price up by 20%.
-	s.spot.Update(Rate{From: "USD", To: "BTC", Bid: 78000, Ask: 80000, Mid: 79000, SourceVenue: "kraken"})
+	s.spot.Update(Rate{From: "USD", To: "BTC", Bid: decimal.NewFromInt(78000), Ask: decimal.NewFromInt(80000), Mid: decimal.NewFromInt(79000), SourceVenue: "kraken"})
 	rec2 := doReq(t, h, http.MethodPost, "/internal/v1/quotes/"+id+"/claim", ClaimRequest{ClaimedBy: "orchestrator"})
 	if rec2.Code != http.StatusConflict {
 		t.Fatalf("status=%d body=%s", rec2.Code, rec2.Body.String())
@@ -363,19 +364,19 @@ func TestFeeScheduleMatching(t *testing.T) {
 	store := NewStore()
 	now := time.Now().UTC()
 	store.SetFeeSchedules([]FeeSchedule{
-		{UserTier: "TIER_2", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 1000, Side: "BUY", SpreadBPS: 70, FeeType: "BPS", FeeBPS: 40, Enabled: true, UpdatedAt: now},
-		{UserTier: "TIER_2", Asset: "BTC", SizeBandMin: 1000, SizeBandMax: 10000, Side: "BUY", SpreadBPS: 50, FeeType: "BPS", FeeBPS: 20, Enabled: true, UpdatedAt: now},
+		{UserTier: "TIER_2", Asset: "BTC", SizeBandMin: decimal.Zero, SizeBandMax: decimal.NewFromInt(1000), Side: "BUY", SpreadBPS: 70, FeeType: "BPS", FeeBPS: 40, Enabled: true, UpdatedAt: now},
+		{UserTier: "TIER_2", Asset: "BTC", SizeBandMin: decimal.NewFromInt(1000), SizeBandMax: decimal.NewFromInt(10000), Side: "BUY", SpreadBPS: 50, FeeType: "BPS", FeeBPS: 20, Enabled: true, UpdatedAt: now},
 	})
 	spot := NewSpotService(5 * time.Second)
 	p := NewPricer(store, spot, 100)
-	res, err := p.Compute("USD", "BTC", 500, "TIER_2", "BUY")
+	res, err := p.Compute("USD", "BTC", decimal.NewFromInt(500), "TIER_2", "BUY")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.SpreadBPS != 70 {
 		t.Fatalf("expected 70 got %d", res.SpreadBPS)
 	}
-	res, _ = p.Compute("USD", "BTC", 5000, "TIER_2", "BUY")
+	res, _ = p.Compute("USD", "BTC", decimal.NewFromInt(5000), "TIER_2", "BUY")
 	if res.SpreadBPS != 50 {
 		t.Fatalf("expected 50 got %d", res.SpreadBPS)
 	}
@@ -385,7 +386,7 @@ func TestFeeScheduleDefaultFallback(t *testing.T) {
 	store := NewStore()
 	spot := NewSpotService(5 * time.Second)
 	p := NewPricer(store, spot, 100)
-	res, err := p.Compute("USD", "BTC", 500, "TIER_3", "BUY")
+	res, err := p.Compute("USD", "BTC", decimal.NewFromInt(500), "TIER_3", "BUY")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +400,7 @@ func TestFeeScheduleHotReload(t *testing.T) {
 	h := helperMux(s)
 	// Replace schedules with a single high-spread one.
 	s.store.SetFeeSchedules([]FeeSchedule{
-		{UserTier: "TIER_1", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 10000, Side: "BUY", SpreadBPS: 200, FeeType: "FLAT", FeeAmount: 1, Enabled: true},
+		{UserTier: "TIER_1", Asset: "BTC", SizeBandMin: decimal.Zero, SizeBandMax: decimal.NewFromInt(10000), Side: "BUY", SpreadBPS: 200, FeeType: "FLAT", FeeAmount: decimal.NewFromInt(1), Enabled: true},
 	})
 	rec := doReq(t, h, http.MethodPost, "/internal/v1/fee-schedules/reload", nil)
 	if rec.Code != http.StatusOK {
@@ -420,8 +421,8 @@ func TestSpotCacheHit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Mid != 65000 {
-		t.Fatalf("expected mid 65000 got %f", r.Mid)
+	if !r.Mid.Equal(decimal.NewFromInt(65000)) {
+		t.Fatalf("expected mid 65000 got %s", r.Mid.String())
 	}
 }
 
@@ -437,15 +438,15 @@ func TestSpotCacheStaleTriggersReseed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Mid != 65000 {
-		t.Fatalf("reseed failed, got %f", r.Mid)
+	if !r.Mid.Equal(decimal.NewFromInt(65000)) {
+		t.Fatalf("reseed failed, got %s", r.Mid.String())
 	}
 }
 
 func TestSpotCacheLastGoodFallback(t *testing.T) {
 	svc := NewSpotService(5 * time.Second)
 	// Inject a rate for an unknown pair via Update.
-	svc.Update(Rate{From: "USD", To: "DOGE", Bid: 0.1, Ask: 0.11, Mid: 0.105, SourceVenue: "kraken"})
+	svc.Update(Rate{From: "USD", To: "DOGE", Bid: decimal.NewFromFloat(0.1), Ask: decimal.NewFromFloat(0.11), Mid: decimal.NewFromFloat(0.105), SourceVenue: "kraken"})
 	// Now evict by clearing cache indirectly via short TTL & long sleep.
 	svc.SetMaxStaleAge(20 * time.Millisecond)
 	time.Sleep(40 * time.Millisecond)
@@ -457,8 +458,8 @@ func TestSpotCacheLastGoodFallback(t *testing.T) {
 	if !r.Stale {
 		t.Fatalf("expected stale flag, got %+v", r)
 	}
-	if r.Mid != 0.105 {
-		t.Fatalf("expected last-good 0.105, got %f", r.Mid)
+	if !r.Mid.Equal(decimal.NewFromFloat(0.105)) {
+		t.Fatalf("expected last-good 0.105, got %s", r.Mid.String())
 	}
 }
 

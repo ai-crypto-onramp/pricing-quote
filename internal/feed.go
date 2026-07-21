@@ -4,16 +4,18 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 // FeedMessage is a single spot-rate update published to RATE_FEED_TOPIC.
 type FeedMessage struct {
-	Pair        string  `json:"pair"`
-	Bid         float64 `json:"bid"`
-	Ask         float64 `json:"ask"`
-	Mid         float64 `json:"mid"`
-	SourceVenue string  `json:"source_venue"`
-	TS          time.Time `json:"ts"`
+	Pair        string          `json:"pair"`
+	Bid         decimal.Decimal `json:"bid"`
+	Ask         decimal.Decimal `json:"ask"`
+	Mid         decimal.Decimal `json:"mid"`
+	SourceVenue string          `json:"source_venue"`
+	TS          time.Time       `json:"ts"`
 }
 
 // FeedSubscriber is the pub/sub subscriber contract. The in-memory
@@ -117,8 +119,8 @@ func (s *Server) startFeedConsumer(ctx context.Context, feed FeedSubscriber) fun
 	innerCtx, cancel := context.WithCancel(ctx)
 	go func() {
 		_ = feed.Subscribe(innerCtx, func(msg FeedMessage) {
-			if msg.Mid <= 0 && msg.Bid > 0 && msg.Ask > 0 {
-				msg.Mid = (msg.Bid + msg.Ask) / 2
+			if msg.Mid.LessThanOrEqual(decimal.Zero) && msg.Bid.GreaterThan(decimal.Zero) && msg.Ask.GreaterThan(decimal.Zero) {
+				msg.Mid = msg.Bid.Add(msg.Ask).Div(decimal.NewFromInt(2))
 			}
 			from, to := splitPair(msg.Pair)
 			if from == "" || to == "" {

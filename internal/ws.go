@@ -97,11 +97,11 @@ func (h *wsHub) remove(sub *wsSubscriber) {
 }
 
 // fanout sends a rate frame to every subscriber whose pair set contains the
-// given pair.
+// given pair. Breaking: "rate" is now a JSON string (decimal).
 func (h *wsHub) fanout(pair string, r Rate) {
 	frame, _ := json.Marshal(map[string]any{
 		"pair":   pair,
-		"rate":   r.Mid,
+		"rate":   r.Mid.String(),
 		"ts":     r.TS.UTC().Format(time.RFC3339Nano),
 		"source": r.SourceVenue,
 	})

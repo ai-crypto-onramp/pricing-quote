@@ -1,9 +1,10 @@
 package pricing
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/shopspring/decimal"
 )
 
 // AppError is a structured error carrying an HTTP status and a code.
@@ -18,13 +19,13 @@ func (e *AppError) Error() string { return e.Code + ": " + e.Message }
 func (e *AppError) Unwrap() error { return e }
 
 var (
-	errNotFound         = &AppError{Status: http.StatusNotFound, Code: "not_found", Message: "quote not found"}
-	errExpired          = &AppError{Status: http.StatusGone, Code: "EXPIRED", Message: "quote expired"}
-	errBadCurrency      = &AppError{Status: http.StatusBadRequest, Code: "invalid_currency", Message: "currency code must be 3-letter uppercase or a crypto symbol"}
-	errBadAmount        = &AppError{Status: http.StatusBadRequest, Code: "invalid_amount", Message: "amount must be > 0"}
-	errBadTier          = &AppError{Status: http.StatusBadRequest, Code: "invalid_tier", Message: "unsupported user_tier"}
-	errBadSide          = &AppError{Status: http.StatusBadRequest, Code: "invalid_side", Message: "side must be buy or sell"}
-	errSpotUnavailable  = &AppError{Status: http.StatusServiceUnavailable, Code: "spot_unavailable", Message: "spot rate unavailable"}
+	errNotFound        = &AppError{Status: http.StatusNotFound, Code: "not_found", Message: "quote not found"}
+	errExpired         = &AppError{Status: http.StatusGone, Code: "EXPIRED", Message: "quote expired"}
+	errBadCurrency     = &AppError{Status: http.StatusBadRequest, Code: "invalid_currency", Message: "currency code must be 3-letter uppercase or a crypto symbol"}
+	errBadAmount       = &AppError{Status: http.StatusBadRequest, Code: "invalid_amount", Message: "amount must be > 0"}
+	errBadTier         = &AppError{Status: http.StatusBadRequest, Code: "invalid_tier", Message: "unsupported user_tier"}
+	errBadSide         = &AppError{Status: http.StatusBadRequest, Code: "invalid_side", Message: "side must be buy or sell"}
+	errSpotUnavailable = &AppError{Status: http.StatusServiceUnavailable, Code: "spot_unavailable", Message: "spot rate unavailable"}
 )
 
 var supportedTiers = map[string]bool{"TIER_1": true, "TIER_2": true, "TIER_3": true}
@@ -57,17 +58,16 @@ func validateSide(s string) error {
 	return nil
 }
 
-func parseAmount(s string) (float64, error) {
+func parseAmount(s string) (decimal.Decimal, error) {
 	if s == "" {
-		return 0, errBadAmount
+		return decimal.Zero, errBadAmount
 	}
-	var f float64
-	_, err := fmt.Sscanf(s, "%f", &f)
+	f, err := decimal.NewFromString(s)
 	if err != nil {
-		return 0, errBadAmount
+		return decimal.Zero, errBadAmount
 	}
-	if f <= 0 {
-		return 0, errBadAmount
+	if f.LessThanOrEqual(decimal.Zero) {
+		return decimal.Zero, errBadAmount
 	}
 	return f, nil
 }

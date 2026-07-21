@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // Config holds runtime knobs (env-overridable, but defaults are hardcoded).
@@ -19,27 +19,27 @@ type Config struct {
 	SlippageToleranceBPS int
 	BulkQuoteMaxItems    int
 
-	Port                string
-	RedisURL            string
-	DatabaseURL         string
-	FeeScheduleURL      string
-	FXHedgingURL        string
+	Port                 string
+	RedisURL             string
+	DatabaseURL          string
+	FeeScheduleURL       string
+	FXHedgingURL         string
 	ExchangeConnectorURL string
-	RateFeedTopic       string
-	OTLPEndpoint        string
-	LogLevel            string
-	L1CacheSize         int
-	L1CacheTTL          time.Duration
+	RateFeedTopic        string
+	OTLPEndpoint         string
+	LogLevel             string
+	L1CacheSize          int
+	L1CacheTTL           time.Duration
 }
 
 // DefaultConfig returns the documented default configuration.
 func DefaultConfig() Config {
 	return Config{
 		RateLockTTL:          30 * time.Second,
-		MaxStaleAge:           250 * time.Millisecond,
-		DefaultSpreadBPS:      100,
+		MaxStaleAge:          250 * time.Millisecond,
+		DefaultSpreadBPS:     100,
 		SlippageToleranceBPS: 150,
-		BulkQuoteMaxItems:     25,
+		BulkQuoteMaxItems:    25,
 		Port:                 "8080",
 		RedisURL:             "redis://localhost:6379",
 		FeeScheduleURL:       "http://config-svc/v1/fee-schedules",
@@ -95,14 +95,15 @@ func NewServer(cfg Config) *Server {
 
 func seedFeeSchedules(store *Store) {
 	now := time.Now().UTC()
+	zero := decimal.Zero
 	fs := []FeeSchedule{
-		{ID: newFeeScheduleID(), UserTier: "TIER_1", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 1000, Side: "BUY", SpreadBPS: 80, FeeType: "BPS", FeeBPS: 50, Enabled: true, UpdatedAt: now},
-		{ID: newFeeScheduleID(), UserTier: "TIER_1", Asset: "BTC", SizeBandMin: 1000, SizeBandMax: 10000, Side: "BUY", SpreadBPS: 60, FeeType: "BPS", FeeBPS: 30, Enabled: true, UpdatedAt: now},
-		{ID: newFeeScheduleID(), UserTier: "TIER_1", Asset: "ETH", SizeBandMin: 0, SizeBandMax: 100, Side: "BUY", SpreadBPS: 90, FeeType: "BPS", FeeBPS: 50, Enabled: true, UpdatedAt: now},
-		{ID: newFeeScheduleID(), UserTier: "TIER_2", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 1000, Side: "BUY", SpreadBPS: 70, FeeType: "BPS", FeeBPS: 40, Enabled: true, UpdatedAt: now},
-		{ID: newFeeScheduleID(), UserTier: "TIER_2", Asset: "ETH", SizeBandMin: 0, SizeBandMax: 100, Side: "BUY", SpreadBPS: 75, FeeType: "BPS", FeeBPS: 40, Enabled: true, UpdatedAt: now},
-		{ID: newFeeScheduleID(), UserTier: "TIER_2", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 1000, Side: "SELL", SpreadBPS: 70, FeeType: "BPS", FeeBPS: 40, Enabled: true, UpdatedAt: now},
-		{ID: newFeeScheduleID(), UserTier: "TIER_1", Asset: "BTC", SizeBandMin: 0, SizeBandMax: 1000, Side: "SELL", SpreadBPS: 80, FeeType: "BPS", FeeBPS: 50, Enabled: true, UpdatedAt: now},
+		{ID: newFeeScheduleID(), UserTier: "TIER_1", Asset: "BTC", SizeBandMin: zero, SizeBandMax: decimal.NewFromInt(1000), Side: "BUY", SpreadBPS: 80, FeeType: "BPS", FeeBPS: 50, Enabled: true, UpdatedAt: now},
+		{ID: newFeeScheduleID(), UserTier: "TIER_1", Asset: "BTC", SizeBandMin: decimal.NewFromInt(1000), SizeBandMax: decimal.NewFromInt(10000), Side: "BUY", SpreadBPS: 60, FeeType: "BPS", FeeBPS: 30, Enabled: true, UpdatedAt: now},
+		{ID: newFeeScheduleID(), UserTier: "TIER_1", Asset: "ETH", SizeBandMin: zero, SizeBandMax: decimal.NewFromInt(100), Side: "BUY", SpreadBPS: 90, FeeType: "BPS", FeeBPS: 50, Enabled: true, UpdatedAt: now},
+		{ID: newFeeScheduleID(), UserTier: "TIER_2", Asset: "BTC", SizeBandMin: zero, SizeBandMax: decimal.NewFromInt(1000), Side: "BUY", SpreadBPS: 70, FeeType: "BPS", FeeBPS: 40, Enabled: true, UpdatedAt: now},
+		{ID: newFeeScheduleID(), UserTier: "TIER_2", Asset: "ETH", SizeBandMin: zero, SizeBandMax: decimal.NewFromInt(100), Side: "BUY", SpreadBPS: 75, FeeType: "BPS", FeeBPS: 40, Enabled: true, UpdatedAt: now},
+		{ID: newFeeScheduleID(), UserTier: "TIER_2", Asset: "BTC", SizeBandMin: zero, SizeBandMax: decimal.NewFromInt(1000), Side: "SELL", SpreadBPS: 70, FeeType: "BPS", FeeBPS: 40, Enabled: true, UpdatedAt: now},
+		{ID: newFeeScheduleID(), UserTier: "TIER_1", Asset: "BTC", SizeBandMin: zero, SizeBandMax: decimal.NewFromInt(1000), Side: "SELL", SpreadBPS: 80, FeeType: "BPS", FeeBPS: 50, Enabled: true, UpdatedAt: now},
 	}
 	store.SetFeeSchedules(fs)
 }
@@ -264,6 +265,8 @@ func (s *Server) quotesHandler(w http.ResponseWriter, r *http.Request) {
 	s.singleQuote(w, r, body)
 }
 
+// singleQuote handles POST /v1/quotes (single).
+// Breaking: rate/fee/total/crypto_amount are JSON strings (decimal).
 func (s *Server) singleQuote(w http.ResponseWriter, r *http.Request, body []byte) {
 	ctx, span := startSpan(r.Context(), "POST /v1/quotes")
 	defer span.End()
@@ -287,6 +290,8 @@ func (s *Server) singleQuote(w http.ResponseWriter, r *http.Request, body []byte
 	json.NewEncoder(w).Encode(q.toResponse())
 }
 
+// bulkQuotes handles POST /v1/quotes (bulk).
+// Breaking: per-quote rate/fee/total/crypto_amount are JSON strings (decimal).
 func (s *Server) bulkQuotes(w http.ResponseWriter, r *http.Request, body []byte) {
 	ctx, span := startSpan(r.Context(), "POST /v1/quotes bulk")
 	defer span.End()
@@ -339,12 +344,12 @@ func (s *Server) createQuote(ctx context.Context, req quoteRequest) (*Quote, *Ap
 		From:         req.From,
 		To:           req.To,
 		Amount:       req.Amount,
-		Rate:         strconv.FormatFloat(res.Rate, 'f', 8, 64),
+		Rate:         res.Rate.String(),
 		SpreadBPS:    res.SpreadBPS,
-		Fee:          strconv.FormatFloat(res.Fee, 'f', 8, 64),
+		Fee:          res.Fee.String(),
 		FeeCurrency:  req.From,
-		Total:        strconv.FormatFloat(res.Total, 'f', 8, 64),
-		CryptoAmount: strconv.FormatFloat(res.CryptoAmount, 'f', 8, 64),
+		Total:        res.Total.String(),
+		CryptoAmount: res.CryptoAmount.String(),
 		UserTier:     req.UserTier,
 		Side:         req.Side,
 		Status:       StatusOpen,
@@ -352,11 +357,11 @@ func (s *Server) createQuote(ctx context.Context, req quoteRequest) (*Quote, *Ap
 		CreatedAt:    now,
 		ExpiresAt:    exp,
 		LockedRate:   res.Rate,
-		SpotPrice:     res.Spot,
+		SpotPrice:    res.Spot,
 	}
 	s.store.SaveQuote(q)
 	lockPayload, _ := json.Marshal(map[string]any{
-		"rate":         res.Rate,
+		"rate":         res.Rate.String(),
 		"from":         req.From,
 		"to":           req.To,
 		"amount":       req.Amount,
@@ -396,6 +401,8 @@ func (s *Server) quoteByIDHandler(w http.ResponseWriter, r *http.Request) {
 	s.getQuote(w, r, id)
 }
 
+// getQuote handles GET /v1/quotes/:id.
+// Breaking: rate/fee/total/crypto_amount are JSON strings (decimal).
 func (s *Server) getQuote(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
 	_, span := startSpan(r.Context(), "GET /v1/quotes/:id")
 	defer span.End()
@@ -415,6 +422,8 @@ func (s *Server) getQuote(w http.ResponseWriter, r *http.Request, id uuid.UUID) 
 	json.NewEncoder(w).Encode(q.toResponse())
 }
 
+// refreshQuote handles POST /v1/quotes/:id/refresh.
+// Breaking: rate/fee/total/crypto_amount are JSON strings (decimal).
 func (s *Server) refreshQuote(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
 	_, span := startSpan(r.Context(), "POST /v1/quotes/:id/refresh")
 	defer span.End()
@@ -441,12 +450,12 @@ func (s *Server) refreshQuote(w http.ResponseWriter, r *http.Request, id uuid.UU
 		From:         old.From,
 		To:           old.To,
 		Amount:       old.Amount,
-		Rate:         strconv.FormatFloat(res.Rate, 'f', 8, 64),
+		Rate:         res.Rate.String(),
 		SpreadBPS:    res.SpreadBPS,
-		Fee:          strconv.FormatFloat(res.Fee, 'f', 8, 64),
+		Fee:          res.Fee.String(),
 		FeeCurrency:  old.From,
-		Total:        strconv.FormatFloat(res.Total, 'f', 8, 64),
-		CryptoAmount: strconv.FormatFloat(res.CryptoAmount, 'f', 8, 64),
+		Total:        res.Total.String(),
+		CryptoAmount: res.CryptoAmount.String(),
 		UserTier:     old.UserTier,
 		Side:         old.Side,
 		Status:       StatusOpen,
@@ -458,7 +467,7 @@ func (s *Server) refreshQuote(w http.ResponseWriter, r *http.Request, id uuid.UU
 	}
 	s.store.SaveQuote(nq)
 	lockPayload, _ := json.Marshal(map[string]any{
-		"rate":         res.Rate,
+		"rate":         res.Rate.String(),
 		"from":         old.From,
 		"to":           old.To,
 		"amount":       old.Amount,
@@ -474,6 +483,7 @@ func (s *Server) refreshQuote(w http.ResponseWriter, r *http.Request, id uuid.UU
 }
 
 // internalQuoteHandler dispatches POST /internal/v1/quotes/{id}/claim.
+// Breaking: returned quote rate/fee/total/crypto_amount are JSON strings (decimal).
 func (s *Server) internalQuoteHandler(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/internal/v1/quotes/")
 	parts := strings.SplitN(rest, "/", 2)
@@ -542,6 +552,7 @@ func (s *Server) feeSchedulesReload(w http.ResponseWriter, r *http.Request) {
 }
 
 // feeSchedulesHandler handles GET /v1/fee-schedules.
+// Breaking: fee_amount, size_band_min, size_band_max are now JSON strings.
 func (s *Server) feeSchedulesHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
@@ -554,12 +565,12 @@ func (s *Server) feeSchedulesHandler(w http.ResponseWriter, r *http.Request) {
 			"id":            f.ID,
 			"user_tier":     f.UserTier,
 			"asset":         f.Asset,
-			"size_band_min": f.SizeBandMin,
-			"size_band_max": f.SizeBandMax,
+			"size_band_min": f.SizeBandMin.String(),
+			"size_band_max": f.SizeBandMax.String(),
 			"side":          f.Side,
 			"spread_bps":    f.SpreadBPS,
 			"fee_type":      f.FeeType,
-			"fee_amount":    f.FeeAmount,
+			"fee_amount":    f.FeeAmount.String(),
 			"fee_bps":       f.FeeBPS,
 			"enabled":       f.Enabled,
 			"updated_at":    f.UpdatedAt.UTC().Format(time.RFC3339Nano),
@@ -593,6 +604,7 @@ func (s *Server) rateSourcesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // listQuotes handles GET /v1/quotes (list all quotes, newest first).
+// Breaking: per-quote rate/fee/total/crypto_amount are JSON strings (decimal).
 func (s *Server) listQuotes(w http.ResponseWriter, r *http.Request) {
 	_, span := startSpan(r.Context(), "GET /v1/quotes")
 	defer span.End()

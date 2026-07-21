@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // ClaimRequest is the body of POST /internal/v1/quotes/:id/claim.
@@ -14,9 +15,9 @@ type ClaimRequest struct {
 
 // ClaimResult is the outcome of an attempted claim.
 type ClaimResult struct {
-	Quote    *Quote
-	Reason   string
-	Stale    bool
+	Quote  *Quote
+	Reason string
+	Stale  bool
 }
 
 // ClaimService implements the atomic claim flow with expiry and slippage guards.
@@ -31,11 +32,11 @@ type ClaimService struct {
 // NewClaimService returns a ClaimService.
 func NewClaimService(store *Store, locks LockBackend, spot *SpotService, audit *AuditLog, slipBPS int) *ClaimService {
 	return &ClaimService{
-		store:                 store,
-		locks:                 locks,
-		spot:                  spot,
-		audit:                 audit,
-		slippageToleranceBPS:  slipBPS,
+		store:                store,
+		locks:                locks,
+		spot:                 spot,
+		audit:                audit,
+		slippageToleranceBPS: slipBPS,
 	}
 }
 
@@ -63,25 +64,25 @@ func (c *ClaimService) Claim(id uuid.UUID, claimedBy string) ClaimResult {
 		return ClaimResult{Reason: "already_claimed", Quote: q}
 	}
 	var locked struct {
-		Rate float64 `json:"rate"`
+		Rate decimal.Decimal `json:"rate"`
 	}
 	_ = json.Unmarshal([]byte(lockVal), &locked)
 
 	curRate, err := c.spot.Get(q.From, q.To)
 	if err == nil {
-		var base float64
-		if curRate.Mid > 0 {
+		var base decimal.Decimal
+		if curRate.Mid.GreaterThan(decimal.Zero) {
 			base = curRate.Mid
 		} else {
-			base = (curRate.Bid + curRate.Ask) / 2
+			base = curRate.Bid.Add(curRate.Ask).Div(decimal.NewFromInt(2))
 		}
-		if base > 0 && q.LockedRate > 0 {
-			diff := base - q.LockedRate
-			bps := (diff / q.LockedRate) * 10000
-			if bps < 0 {
-				bps = -bps
+		if base.GreaterThan(decimal.Zero) && q.LockedRate.GreaterThan(decimal.Zero) {
+			diff := base.Sub(q.LockedRate)
+			bps := diff.Div(q.LockedRate).Mul(decimal.NewFromInt(10000))
+			if bps.LessThan(decimal.Zero) {
+				bps = bps.Neg()
 			}
-			if int(bps) > c.slippageToleranceBPS {
+			if bps.IntPart() > int64(c.slippageToleranceBPS) {
 				c.audit.Append(AuditEvent{
 					Type: "quote.slippage_rejected", QuoteID: id, UserTier: q.UserTier,
 					SourceVenue: q.SourceVenue, Reason: "slippage_exceeded",

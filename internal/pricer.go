@@ -1,7 +1,7 @@
 package pricing
 
 import (
-	"math"
+	"github.com/shopspring/decimal"
 )
 
 // Pricer computes quote prices by combining the spot rate with a matching fee
@@ -33,12 +33,12 @@ func (p *Pricer) ReloadIndex() {
 
 // ComputeResult is the output of Pricer.Compute.
 type ComputeResult struct {
-	Rate         float64
-	Spot         float64
+	Rate         decimal.Decimal
+	Spot         decimal.Decimal
 	SpreadBPS    int
-	Fee          float64
-	Total        float64
-	CryptoAmount float64
+	Fee          decimal.Decimal
+	Total        decimal.Decimal
+	CryptoAmount decimal.Decimal
 	SourceVenue  string
 }
 
@@ -46,7 +46,7 @@ type ComputeResult struct {
 // amount for a quote request. Side is "BUY" (user buys crypto, pays fiat) or
 // "SELL" (user sells crypto, receives fiat). For buys, amount is fiat; for
 // sells, amount is crypto.
-func (p *Pricer) Compute(from, to string, amount float64, userTier, side string) (ComputeResult, error) {
+func (p *Pricer) Compute(from, to string, amount decimal.Decimal, userTier, side string) (ComputeResult, error) {
 	r, err := p.spot.Get(from, to)
 	if err != nil {
 		return ComputeResult{}, err
@@ -64,32 +64,32 @@ func (p *Pricer) Compute(from, to string, amount float64, userTier, side string)
 	}
 
 	spot := r.Mid
-	if spot <= 0 {
-		spot = r.Bid + (r.Ask-r.Bid)/2
+	if spot.LessThanOrEqual(decimal.Zero) {
+		spot = r.Bid.Add(r.Ask.Sub(r.Bid).Div(decimal.NewFromInt(2)))
 	}
-	if spot <= 0 {
+	if spot.LessThanOrEqual(decimal.Zero) {
 		return ComputeResult{}, errBadRate
 	}
-	spread := float64(spreadBPS) / 10000.0
+	spread := decimal.NewFromInt(int64(spreadBPS)).Div(decimal.NewFromInt(10000))
 
-	var rate, fee, total, cryptoAmount float64
+	var rate, fee, total, cryptoAmount decimal.Decimal
 	switch side {
 	case "BUY":
-		rate = spot * (1 + spread)
+		rate = spot.Mul(decimal.NewFromInt(1).Add(spread))
 		fee = computeFee(sched, amount)
-		total = amount + fee
-		cryptoAmount = amount / rate
+		total = amount.Add(fee)
+		cryptoAmount = amount.Div(rate)
 	case "SELL":
-		rate = spot * (1 - spread)
+		rate = spot.Mul(decimal.NewFromInt(1).Sub(spread))
 		cryptoAmount = amount
 		fee = computeFee(sched, total)
-		total = amount*rate - fee
+		total = amount.Mul(rate).Sub(fee)
 	}
 
 	return ComputeResult{
 		Rate:         rate,
 		Spot:         spot,
-		SpreadBPS:     spreadBPS,
+		SpreadBPS:    spreadBPS,
 		Fee:          round(fee, 8),
 		Total:        round(total, 8),
 		CryptoAmount: round(cryptoAmount, 8),
@@ -97,7 +97,7 @@ func (p *Pricer) Compute(from, to string, amount float64, userTier, side string)
 	}, nil
 }
 
-func (p *Pricer) matchSchedule(tier, asset, side string, amount float64) *FeeSchedule {
+func (p *Pricer) matchSchedule(tier, asset, side string, amount decimal.Decimal) *FeeSchedule {
 	if s := p.index.Lookup(tier, asset, side, amount); s != nil {
 		return s
 	}
@@ -119,7 +119,7 @@ func (p *Pricer) matchSchedule(tier, asset, side string, amount float64) *FeeSch
 		if s.Side != "" && s.Side != side {
 			continue
 		}
-		if amount < s.SizeBandMin || (s.SizeBandMax > 0 && amount > s.SizeBandMax) {
+		if amount.LessThan(s.SizeBandMin) || (s.SizeBandMax.GreaterThan(decimal.Zero) && amount.GreaterThan(s.SizeBandMax)) {
 			continue
 		}
 		best = s
@@ -128,23 +128,23 @@ func (p *Pricer) matchSchedule(tier, asset, side string, amount float64) *FeeSch
 	return best
 }
 
-func computeFee(s *FeeSchedule, base float64) float64 {
+func computeFee(s *FeeSchedule, base decimal.Decimal) decimal.Decimal {
 	if s == nil {
-		return 0
+		return decimal.Zero
 	}
 	switch s.FeeType {
 	case "FLAT":
 		return s.FeeAmount
 	case "BPS":
-		return base * float64(s.FeeBPS) / 10000.0
+		return base.Mul(decimal.NewFromInt(int64(s.FeeBPS))).Div(decimal.NewFromInt(10000))
 	default:
-		return 0
+		return decimal.Zero
 	}
 }
 
-func round(v float64, places int) float64 {
-	pow := math.Pow(10, float64(places))
-	return math.Round(v*pow) / pow
+func round(v decimal.Decimal, places int) decimal.Decimal {
+	pow := decimal.NewFromInt(10).Pow(decimal.NewFromInt(int64(places)))
+	return v.Mul(pow).Round(0).Div(pow)
 }
 
 var errBadRate = errStr("invalid spot rate")

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 // wsTestClient is a minimal WebSocket client for integration tests.
@@ -102,7 +104,7 @@ func TestWSHandshakeAndSubscribe(t *testing.T) {
 	// Give the server time to process the subscribe command.
 	time.Sleep(50 * time.Millisecond)
 	// Trigger a fanout by updating the spot cache.
-	s.spot.Update(Rate{From: "USD", To: "BTC", Bid: 65000, Ask: 65100, Mid: 65050, SourceVenue: "kraken"})
+	s.spot.Update(Rate{From: "USD", To: "BTC", Bid: decimal.NewFromInt(65000), Ask: decimal.NewFromInt(65100), Mid: decimal.NewFromInt(65050), SourceVenue: "kraken"})
 	// Read a frame (the fanout).
 	c.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	frame, err := c.readFrame()
@@ -130,7 +132,7 @@ func TestWSUnsubscribeNoFrame(t *testing.T) {
 	_ = c.sendText([]byte(`{"action":"unsubscribe","pairs":["USD-ETH"]}`))
 	time.Sleep(20 * time.Millisecond)
 	// Update ETH; should not produce a frame to this client (subscribed set is empty now).
-	s.spot.Update(Rate{From: "USD", To: "ETH", Bid: 3000, Ask: 3010, Mid: 3005, SourceVenue: "kraken"})
+	s.spot.Update(Rate{From: "USD", To: "ETH", Bid: decimal.NewFromInt(3000), Ask: decimal.NewFromInt(3010), Mid: decimal.NewFromInt(3005), SourceVenue: "kraken"})
 	c.conn.SetReadDeadline(time.Now().Add(150 * time.Millisecond))
 	_, err := c.readFrame()
 	if err == nil {

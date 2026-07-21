@@ -5,15 +5,17 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 // Rate is a cached spot rate for a trading pair.
 type Rate struct {
 	From        string
 	To          string
-	Bid         float64
-	Ask         float64
-	Mid         float64
+	Bid         decimal.Decimal
+	Ask         decimal.Decimal
+	Mid         decimal.Decimal
 	TS          time.Time
 	SourceVenue string
 	Stale       bool
@@ -71,24 +73,24 @@ func (c *lruCache) get(key string) (Rate, bool) {
 
 // Venue is a per-venue circuit-breaker state used by SpotService.
 type Venue struct {
-	Name         string
-	Errors       int
-	Down         bool
-	OpenedAt     time.Time
+	Name           string
+	Errors         int
+	Down           bool
+	OpenedAt       time.Time
 	ErrorThreshold int
 }
 
 // SpotService provides spot-rate lookups backed by an LRU cache, stale-rate
 // enforcement, last-good fallback, and a simple per-venue circuit breaker.
 type SpotService struct {
-	mu            sync.Mutex
-	cache         *lruCache
-	lastGood      map[string]Rate
-	maxStaleAge   time.Duration
-	venues        map[string]*Venue
-	venueOrder    []string
+	mu             sync.Mutex
+	cache          *lruCache
+	lastGood       map[string]Rate
+	maxStaleAge    time.Duration
+	venues         map[string]*Venue
+	venueOrder     []string
 	errorThreshold int
-	ready         bool
+	ready          bool
 	// onUpdate, if set, is invoked with the pair key and the new Rate after
 	// every Update. Used to fan out to WebSocket subscribers.
 	onUpdate func(string, Rate)
@@ -113,10 +115,10 @@ func NewSpotService(maxStaleAge time.Duration) *SpotService {
 func (s *SpotService) seed() {
 	now := time.Now().UTC()
 	seeds := []Rate{
-		{From: "USD", To: "BTC", Bid: 64900, Ask: 65100, Mid: 65000, TS: now, SourceVenue: "kraken"},
-		{From: "USD", To: "ETH", Bid: 3495, Ask: 3505, Mid: 3500, TS: now, SourceVenue: "kraken"},
-		{From: "EUR", To: "BTC", Bid: 69800, Ask: 70200, Mid: 70000, TS: now, SourceVenue: "kraken"},
-		{From: "GBP", To: "BTC", Bid: 82000, Ask: 83000, Mid: 82500, TS: now, SourceVenue: "kraken"},
+		{From: "USD", To: "BTC", Bid: decimal.NewFromInt(64900), Ask: decimal.NewFromInt(65100), Mid: decimal.NewFromInt(65000), TS: now, SourceVenue: "kraken"},
+		{From: "USD", To: "ETH", Bid: decimal.NewFromInt(3495), Ask: decimal.NewFromInt(3505), Mid: decimal.NewFromInt(3500), TS: now, SourceVenue: "kraken"},
+		{From: "EUR", To: "BTC", Bid: decimal.NewFromInt(69800), Ask: decimal.NewFromInt(70200), Mid: decimal.NewFromInt(70000), TS: now, SourceVenue: "kraken"},
+		{From: "GBP", To: "BTC", Bid: decimal.NewFromInt(82000), Ask: decimal.NewFromInt(83000), Mid: decimal.NewFromInt(82500), TS: now, SourceVenue: "kraken"},
 	}
 	s.cache = newLRUCache(s.cache.cap)
 	for _, r := range seeds {

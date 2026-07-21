@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 // FXClient is the fx-hedging integration contract. For non-USD fiat `from`,
@@ -74,7 +76,7 @@ func (c *httpFXClient) FetchFX(ctx context.Context, fiat string) (float64, int, 
 // CrossPairQuote computes a quote for a non-USD fiat pair by combining the
 // fiat→USD leg (from fx-hedging) with the USD/crypto spot. If no FXClient is
 // configured or the fiat is USD, it falls back to the direct spot lookup.
-func (p *Pricer) CrossPairQuote(ctx context.Context, from, to string, amount float64, userTier, side string) (ComputeResult, error) {
+func (p *Pricer) CrossPairQuote(ctx context.Context, from, to string, amount decimal.Decimal, userTier, side string) (ComputeResult, error) {
 	if from == "USD" || p.fx == nil {
 		return p.Compute(from, to, amount, userTier, side)
 	}
@@ -88,21 +90,22 @@ func (p *Pricer) CrossPairQuote(ctx context.Context, from, to string, amount flo
 	if err != nil {
 		return ComputeResult{}, err
 	}
+	fxRateDec := decimal.NewFromFloat(fxRate)
 	// Adjust the rate by the fiat→USD conversion.
 	cross := usdRes
-	cross.Rate = usdRes.Rate / fxRate
-	cross.Spot = usdRes.Spot / fxRate
+	cross.Rate = usdRes.Rate.Div(fxRateDec)
+	cross.Spot = usdRes.Spot.Div(fxRateDec)
 	// Apply hedge-cost markup to the spread for pre-hedged tiers.
 	if hedgeBPS > 0 {
 		cross.SpreadBPS += hedgeBPS
-		spread := float64(cross.SpreadBPS) / 10000.0
+		spread := decimal.NewFromInt(int64(cross.SpreadBPS)).Div(decimal.NewFromInt(10000))
 		switch side {
 		case "BUY":
-			cross.Rate = cross.Spot * (1 + spread)
-			cross.CryptoAmount = amount / cross.Rate
+			cross.Rate = cross.Spot.Mul(decimal.NewFromInt(1).Add(spread))
+			cross.CryptoAmount = amount.Div(cross.Rate)
 		case "SELL":
-			cross.Rate = cross.Spot * (1 - spread)
-			cross.Total = amount*cross.Rate - cross.Fee
+			cross.Rate = cross.Spot.Mul(decimal.NewFromInt(1).Sub(spread))
+			cross.Total = amount.Mul(cross.Rate).Sub(cross.Fee)
 		}
 		cross.Total = round(cross.Total, 8)
 		cross.CryptoAmount = round(cross.CryptoAmount, 8)
